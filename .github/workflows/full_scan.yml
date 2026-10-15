@@ -31,7 +31,7 @@ concurrency:
 
 jobs:
   check-time:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # pinned so the Ubuntu 26 switch (19 Oct 2026) cannot break it
     outputs:
       go: ${{ steps.check.outputs.go }}
     steps:
@@ -49,7 +49,7 @@ jobs:
   scan:
     needs: check-time
     if: needs.check-time.outputs.go == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # pinned so the Ubuntu 26 switch (19 Oct 2026) cannot break it
     timeout-minutes: 30
     env:
       TEST: ${{ github.event_name == 'workflow_dispatch' && inputs.test }}
@@ -103,4 +103,3 @@ jobs:
           done
           echo "::error::Could not save results to the repo after 3 attempts."
           exit 1
-

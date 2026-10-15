@@ -1,1 +1,106 @@
+# FTSE Full Scan: runs the full scanner at 10:00 UK time, Monday to Friday.
+#
+# GitHub's clock is UTC, so this is scheduled twice (09:01 and 10:01 UTC) and a
+# quick check only lets through the one that lands at 10:xx UK time. That keeps
+# it right through the clock changes without editing anything.
+#
+# Manual runs ("Run workflow" button) default to a TEST: 10 shares only, nothing
+# saved to the repo, results downloadable from the run page. Untick "test" to do
+# a real full scan by hand (for example, if the 10:00 one was missed).
+
+name: FTSE Full Scan
+
+on:
+  schedule:
+    - cron: "1 9 * * 1-5"    # 10:01 UK in summer time (BST)
+    - cron: "1 10 * * 1-5"   # 10:01 UK in winter time (GMT)
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "Test run: scan only 10 shares and don't save anything to the repo"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+# All three workflows share this group, so they never save to the repo at the same time.
+concurrency:
+  group: ftse-data
+  cancel-in-progress: false
+
+jobs:
+  check-time:
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.check.outputs.go }}
+    steps:
+      - id: check
+        run: |
+          now=$(TZ=Europe/London date +%H%M)
+          echo "UK time now: $(TZ=Europe/London date '+%H:%M %Z')"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || { [ "$now" -ge 1000 ] && [ "$now" -lt 1100 ]; }; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Not 10:xx UK time (this is the other half of the summer/winter pair), so skipping."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  scan:
+    needs: check-time
+    if: needs.check-time.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TEST: ${{ github.event_name == 'workflow_dispatch' && inputs.test }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install packages
+        run: pip install -r requirements.txt
+
+      - name: Run full scan
+        run: |
+          set +e
+          if [ "$TEST" = "true" ]; then
+            echo "TEST RUN: 10 shares only, results go to test_run/ and are not saved to the repo."
+            python -u ftse_trade_scanner.py --exclude-trusts --limit 10 --data-dir test_run --out test_run/ftse_scan_test.xlsx 2>&1 | tee run_output.txt
+          else
+            python -u ftse_trade_scanner.py --exclude-trusts 2>&1 | tee run_output.txt
+          fi
+          code=${PIPESTATUS[0]}
+          if [ "$code" -ne 0 ] && grep -q "No usable data came back" run_output.txt; then
+            echo "::warning::No market data (market closed or Yahoo unavailable). Nothing recorded; this is not a fault."
+            exit 0
+          fi
+          exit $code
+
+      - name: Make test results downloadable
+        if: env.TEST == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-scan-results
+          path: test_run/
+          if-no-files-found: warn
+
+      - name: Save results to the repo
+        if: env.TEST != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add --all scan_data
+          git add --all -- ftse_scan_latest.xlsx 2>/dev/null || true
+          if git diff --cached --quiet; then echo "Nothing new to save."; exit 0; fi
+          git commit -m "Full scan $(TZ=Europe/London date '+%Y-%m-%d %H:%M')"
+          for attempt in 1 2 3; do
+            git pull --rebase && git push && exit 0
+            sleep 15
+          done
+          echo "::error::Could not save results to the repo after 3 attempts."
+          exit 1
 

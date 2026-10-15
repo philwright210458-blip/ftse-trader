@@ -1,0 +1,351 @@
+company,epic,yahoo_ticker,index,type
+3i,III,III.L,FTSE 100,company
+Aberdeen Group,ABDN,ABDN.L,FTSE 100,company
+Admiral Group,ADM,ADM.L,FTSE 100,company
+Airtel Africa,AAF,AAF.L,FTSE 100,company
+Alliance Witan,ALW,ALW.L,FTSE 100,trust
+Anglo American plc,AAL,AAL.L,FTSE 100,company
+Antofagasta plc,ANTO,ANTO.L,FTSE 100,company
+Associated British Foods,ABF,ABF.L,FTSE 100,company
+AstraZeneca,AZN,AZN.L,FTSE 100,company
+Autotrader Group,AUTO,AUTO.L,FTSE 100,company
+Aviva,AV,AV.L,FTSE 100,company
+Babcock International,BAB,BAB.L,FTSE 100,company
+BAE Systems,BA,BA.L,FTSE 100,company
+Barclays,BARC,BARC.L,FTSE 100,company
+Barratt Redrow,BTRW,BTRW.L,FTSE 100,company
+Beazley,BEZ,BEZ.L,FTSE 100,company
+BP,BP,BP.L,FTSE 100,company
+British American Tobacco,BATS,BATS.L,FTSE 100,company
+British Land,BLND,BLND.L,FTSE 100,company
+BT Group,BT.A,BT-A.L,FTSE 100,company
+Bunzl,BNZL,BNZL.L,FTSE 100,company
+Burberry Group,BRBY,BRBY.L,FTSE 100,company
+Centrica,CNA,CNA.L,FTSE 100,company
+Coca-Cola Europacific Partners,CCEP,CCEP.L,FTSE 100,company
+Coca-Cola HBC,CCH,CCH.L,FTSE 100,company
+Compass Group,CPG,CPG.L,FTSE 100,company
+Computacenter,CCC,CCC.L,FTSE 100,company
+Convatec,CTEC,CTEC.L,FTSE 100,company
+Croda International,CRDA,CRDA.L,FTSE 100,company
+DCC Energy,DCC,DCC.L,FTSE 100,company
+Diageo,DGE,DGE.L,FTSE 100,company
+Diploma,DPLM,DPLM.L,FTSE 100,company
+Endeavour Mining,EDV,EDV.L,FTSE 100,company
+Entain,ENT,ENT.L,FTSE 100,company
+Experian,EXPN,EXPN.L,FTSE 100,company
+F & C Investment Trust,FCIT,FCIT.L,FTSE 100,trust
+Fresnillo plc,FRES,FRES.L,FTSE 100,company
+Games Workshop,GAW,GAW.L,FTSE 100,company
+Glencore,GLEN,GLEN.L,FTSE 100,company
+GSK plc,GSK,GSK.L,FTSE 100,company
+Haleon,HLN,HLN.L,FTSE 100,company
+Halma plc,HLMA,HLMA.L,FTSE 100,company
+Hiscox,HSX,HSX.L,FTSE 100,company
+Howdens Joinery,HWDN,HWDN.L,FTSE 100,company
+HSBC,HSBA,HSBA.L,FTSE 100,company
+ICG,ICG,ICG.L,FTSE 100,company
+IG Group,IGG,IGG.L,FTSE 100,company
+IHG Hotels & Resorts,IHG,IHG.L,FTSE 100,company
+IMI,IMI,IMI.L,FTSE 100,company
+Imperial Brands,IMB,IMB.L,FTSE 100,company
+Informa,INF,INF.L,FTSE 100,company
+International Airlines Group,IAG,IAG.L,FTSE 100,company
+Intertek,ITRK,ITRK.L,FTSE 100,company
+Investec,INVP,INVP.L,FTSE 100,company
+JD Sports,JD,JD.L,FTSE 100,company
+Lion Finance Group,BGEO,BGEO.L,FTSE 100,company
+Kingfisher plc,KGF,KGF.L,FTSE 100,company
+Land Securities,LAND,LAND.L,FTSE 100,company
+Legal & General,LGEN,LGEN.L,FTSE 100,company
+Lloyds Banking Group,LLOY,LLOY.L,FTSE 100,company
+LondonMetric Property,LMP,LMP.L,FTSE 100,company
+London Stock Exchange Group,LSEG,LSEG.L,FTSE 100,company
+M&G,MNG,MNG.L,FTSE 100,company
+Marks & Spencer,MKS,MKS.L,FTSE 100,company
+Melrose Industries,MRO,MRO.L,FTSE 100,company
+Metlen Energy & Metals,MTLN,MTLN.L,FTSE 100,company
+National Grid plc,NG,NG.L,FTSE 100,company
+NatWest Group,NWG,NWG.L,FTSE 100,company
+Next plc,NXT,NXT.L,FTSE 100,company
+Pearson plc,PSON,PSON.L,FTSE 100,company
+Pershing Square Holdings,PSH,PSH.L,FTSE 100,trust
+Persimmon,PSN,PSN.L,FTSE 100,company
+Polar Capital Technology Trust,PCT,PCT.L,FTSE 100,trust
+Prudential plc,PRU,PRU.L,FTSE 100,company
+Reckitt,RKT,RKT.L,FTSE 100,company
+RELX,REL,REL.L,FTSE 100,company
+Rentokil Initial,RTO,RTO.L,FTSE 100,company
+Rio Tinto,RIO,RIO.L,FTSE 100,company
+Rolls-Royce Holdings,RR,RR.L,FTSE 100,company
+Sage Group,SGE,SGE.L,FTSE 100,company
+Sainsbury's,SBRY,SBRY.L,FTSE 100,company
+Schroders,SDR,SDR.L,FTSE 100,company
+Scottish Mortgage Investment Trust,SMT,SMT.L,FTSE 100,trust
+Segro,SGRO,SGRO.L,FTSE 100,company
+Severn Trent,SVT,SVT.L,FTSE 100,company
+Shell plc,SHEL,SHEL.L,FTSE 100,company
+Smiths Group,SMIN,SMIN.L,FTSE 100,company
+Smith & Nephew,SN,SN.L,FTSE 100,company
+Spirax Group,SPX,SPX.L,FTSE 100,company
+SSE plc,SSE,SSE.L,FTSE 100,company
+Standard Chartered,STAN,STAN.L,FTSE 100,company
+Standard Life,SDLF,SDLF.L,FTSE 100,company
+St. James's Place,STJ,STJ.L,FTSE 100,company
+Tesco,TSCO,TSCO.L,FTSE 100,company
+Tritax Big Box REIT,BBOX,BBOX.L,FTSE 100,company
+Unilever,ULVR,ULVR.L,FTSE 100,company
+United Utilities,UU,UU.L,FTSE 100,company
+Vodafone Group,VOD,VOD.L,FTSE 100,company
+Weir,WEIR,WEIR.L,FTSE 100,company
+Whitbread,WTB,WTB.L,FTSE 100,company
+3i Infrastructure,3IN,3IN.L,FTSE 250,trust
+4imprint,FOUR,FOUR.L,FTSE 250,company
+Aberdeen Asia Focus,AAS,AAS.L,FTSE 250,trust
+Aberforth Smaller Companies Trust,ASL,ASL.L,FTSE 250,trust
+AEP Plantations,AEP,AEP.L,FTSE 250,company
+Alfa Financial Software,ALFA,ALFA.L,FTSE 250,company
+Allianz Technology Trust,ATT,ATT.L,FTSE 250,trust
+AO World,AO,AO.L,FTSE 250,company
+Applied Nutrition,APN,APN.L,FTSE 250,company
+Ashmore Group,ASHM,ASHM.L,FTSE 250,company
+Ashoka India Equity Investment Trust,AIE,AIE.L,FTSE 250,trust
+Aston Martin Lagonda,AML,AML.L,FTSE 250,company
+Atalaya Mining,ATYM,ATYM.L,FTSE 250,company
+AVI Global Trust,AGT,AGT.L,FTSE 250,trust
+Avon Technologies,AVON,AVON.L,FTSE 250,company
+B&M,BME,BME.L,FTSE 250,company
+Baillie Gifford Japan Trust,BGFD,BGFD.L,FTSE 250,trust
+Baillie Gifford US Growth Trust,USA,USA.L,FTSE 250,trust
+Balfour Beatty,BBY,BBY.L,FTSE 250,company
+Baltic Classifieds,BCG,BCG.L,FTSE 250,company
+Bankers Investment Trust,BNKR,BNKR.L,FTSE 250,trust
+A.G. Barr,BAG,BAG.L,FTSE 250,company
+AJ Bell,AJB,AJB.L,FTSE 250,company
+Bellway,BWY,BWY.L,FTSE 250,company
+Berkeley Group Holdings,BKG,BKG.L,FTSE 250,company
+BH Macro,BHMG,BHMG.L,FTSE 250,trust
+Big Yellow Group,BYG,BYG.L,FTSE 250,company
+Biopharma Credit,BPCR,BPCR.L,FTSE 250,trust
+BlackRock Greater Europe Investment Trust,BRGE,BRGE.L,FTSE 250,trust
+BlackRock Smaller Companies Trust,BRSC,BRSC.L,FTSE 250,trust
+BlackRock World Mining Trust,BRWM,BRWM.L,FTSE 250,trust
+Bloomsbury Publishing,BMY,BMY.L,FTSE 250,company
+Bluefield Solar Income Fund,BSIF,BSIF.L,FTSE 250,trust
+Bodycote,BOY,BOY.L,FTSE 250,company
+Breedon Group,BREE,BREE.L,FTSE 250,company
+Bridgepoint Group,BPT,BPT.L,FTSE 250,company
+Brunner Investment Trust,BUT,BUT.L,FTSE 250,trust
+Bytes Technology Group,BYIT,BYIT.L,FTSE 250,company
+Caledonia Investments,CLDN,CLDN.L,FTSE 250,trust
+Capital Gearing Trust,CGT,CGT.L,FTSE 250,trust
+Ceres Power,CWR,CWR.L,FTSE 250,company
+Chemring Group,CHG,CHG.L,FTSE 250,company
+Chesnara,CSN,CSN.L,FTSE 250,company
+City of London Investment Trust,CTY,CTY.L,FTSE 250,trust
+Clarkson,CKN,CKN.L,FTSE 250,company
+Close Brothers Group,CBG,CBG.L,FTSE 250,company
+CMC Markets,CMCX,CMCX.L,FTSE 250,company
+Coats Group,COA,COA.L,FTSE 250,company
+Cordiant Digital Infrastructure,CORD,CORD.L,FTSE 250,trust
+Costain Group,COST,COST.L,FTSE 250,company
+Cranswick,CWK,CWK.L,FTSE 250,company
+Currys,CURY,CURY.L,FTSE 250,company
+CVS Group,CVSG,CVSG.L,FTSE 250,company
+Derwent London,DLN,DLN.L,FTSE 250,company
+discoverIE,DSCV,DSCV.L,FTSE 250,company
+Domino's Pizza,DOM,DOM.L,FTSE 250,company
+Drax Group,DRX,DRX.L,FTSE 250,company
+Dr. Martens,DOCS,DOCS.L,FTSE 250,company
+Dunelm Group,DNLM,DNLM.L,FTSE 250,company
+EasyJet,EZJ,EZJ.L,FTSE 250,company
+Edinburgh Investment Trust,EDIN,EDIN.L,FTSE 250,trust
+Edinburgh Worldwide Investment Trust,EWI,EWI.L,FTSE 250,trust
+Elementis,ELM,ELM.L,FTSE 250,company
+Energean,ENOG,ENOG.L,FTSE 250,company
+European Smaller Companies Trust,ESCT,ESCT.L,FTSE 250,trust
+Eurowag,EWG,EWG.L,FTSE 250,company
+Fidelity China Special Situations,FCSS,FCSS.L,FTSE 250,trust
+Fidelity Emerging Markets,FEML,FEML.L,FTSE 250,trust
+Fidelity European Trust,FEV,FEV.L,FTSE 250,trust
+Fidelity Special Values,FSV,FSV.L,FTSE 250,trust
+Finsbury Growth & Income Trust,FGT,FGT.L,FTSE 250,trust
+FirstGroup,FGP,FGP.L,FTSE 250,company
+Foresight Environmental Infrastructure,FGEN,FGEN.L,FTSE 250,trust
+Foresight Group,FSG,FSG.L,FTSE 250,company
+Frasers Group,FRAS,FRAS.L,FTSE 250,company
+Funding Circle,FCH,FCH.L,FTSE 250,company
+Galliford Try,GFRD,GFRD.L,FTSE 250,company
+Gamma Communications,GAMA,GAMA.L,FTSE 250,company
+GB Group,GBG,GBG.L,FTSE 250,company
+GCP Infrastructure Investments,GCP,GCP.L,FTSE 250,trust
+Genuit Group,GEN,GEN.L,FTSE 250,company
+Genus,GNS,GNS.L,FTSE 250,company
+GlobalData,DATA,DATA.L,FTSE 250,company
+Global Smaller Companies Trust,GSCT,GSCT.L,FTSE 250,trust
+Goodwin,GDWN,GDWN.L,FTSE 250,company
+Grafton Group,GFTU,GFTU.L,FTSE 250,company
+Grainger,GRI,GRI.L,FTSE 250,company
+Great Portland Estates,GPE,GPE.L,FTSE 250,company
+Greencoat UK Wind,UKW,UKW.L,FTSE 250,trust
+Greencore,GNC,GNC.L,FTSE 250,company
+Greggs,GRG,GRG.L,FTSE 250,company
+Hammerson,HMSO,HMSO.L,FTSE 250,company
+Hansa Investment Company,HANA,HANA.L,FTSE 250,trust
+Harbour Energy,HBR,HBR.L,FTSE 250,company
+HarbourVest Global Private Equity,HVPE,HVPE.L,FTSE 250,trust
+Harworth Group,HWG,HWG.L,FTSE 250,company
+Hays,HAS,HAS.L,FTSE 250,company
+Helios Towers,HTWS,HTWS.L,FTSE 250,company
+Henderson Far East Income,HFEL,HFEL.L,FTSE 250,trust
+Henderson Smaller Companies Investment Trust,HSL,HSL.L,FTSE 250,trust
+Herald Investment Trust,HRI,HRI.L,FTSE 250,trust
+Hg Capital Trust,HGT,HGT.L,FTSE 250,trust
+HICL Infrastructure Company,HICL,HICL.L,FTSE 250,trust
+Hikma Pharmaceuticals,HIK,HIK.L,FTSE 250,company
+Hill & Smith,HILS,HILS.L,FTSE 250,company
+Hilton Food Group,HFG,HFG.L,FTSE 250,company
+Hochschild Mining,HOC,HOC.L,FTSE 250,company
+Hollywood Bowl Group,BOWL,BOWL.L,FTSE 250,company
+Hunting,HTG,HTG.L,FTSE 250,company
+ICG Enterprise Trust,ICGT,ICGT.L,FTSE 250,trust
+Inchcape,INCH,INCH.L,FTSE 250,company
+IntegraFin Holdings,IHP,IHP.L,FTSE 250,company
+International Personal Finance,IPF,IPF.L,FTSE 250,company
+International Public Partnerships,INPP,INPP.L,FTSE 250,trust
+International Workplace Group,IWG,IWG.L,FTSE 250,company
+Invesco Asia Dragon Trust,IAD,IAD.L,FTSE 250,trust
+IP Group,IPO,IPO.L,FTSE 250,company
+Ithaca Energy,ITH,ITH.L,FTSE 250,company
+ITV,ITV,ITV.L,FTSE 250,company
+Johnson Matthey,JMAT,JMAT.L,FTSE 250,company
+Johnson Service Group,JSG,JSG.L,FTSE 250,company
+JPMorgan American Investment Trust,JAM,JAM.L,FTSE 250,trust
+JPMorgan Claverhouse Investment Trust,JCH,JCH.L,FTSE 250,trust
+JPMorgan Emerging Markets Dividend Income,JEMI,JEMI.L,FTSE 250,trust
+JPMorgan Emerging Markets Growth & Income,JMGI,JMGI.L,FTSE 250,trust
+JPMorgan European Discovery,JEDT,JEDT.L,FTSE 250,trust
+JPMorgan European Growth & Income,JEGI,JEGI.L,FTSE 250,trust
+JPMorgan Global Growth & Income,JGGI,JGGI.L,FTSE 250,trust
+JPMorgan Japanese Investment Trust,JFJ,JFJ.L,FTSE 250,trust
+JTC,JTC,JTC.L,FTSE 250,company
+Jupiter Fund Management,JUP,JUP.L,FTSE 250,company
+Kainos,KNOS,KNOS.L,FTSE 250,company
+Keller Group,KLR,KLR.L,FTSE 250,company
+Kier Group,KIE,KIE.L,FTSE 250,company
+Lancashire Holdings,LRE,LRE.L,FTSE 250,company
+Law Debenture,LWDB,LWDB.L,FTSE 250,trust
+Man Group,EMG,EMG.L,FTSE 250,company
+ME Group International,MEGP,MEGP.L,FTSE 250,company
+Mercantile Investment Trust,MRC,MRC.L,FTSE 250,trust
+Merchants Trust,MRCH,MRCH.L,FTSE 250,trust
+Metro Bank,MTRO,MTRO.L,FTSE 250,company
+Mitchells & Butlers,MAB,MAB.L,FTSE 250,company
+Mitie,MTO,MTO.L,FTSE 250,company
+Molten Ventures,GROW,GROW.L,FTSE 250,trust
+Mondi,MNDI,MNDI.L,FTSE 250,company
+Monks Investment Trust,MNKS,MNKS.L,FTSE 250,trust
+MONY Group,MONY,MONY.L,FTSE 250,company
+Moonpig,MOON,MOON.L,FTSE 250,company
+Morgan Advanced Materials,MGAM,MGAM.L,FTSE 250,company
+Morgan Sindall Group,MGNS,MGNS.L,FTSE 250,company
+Murray Income Trust,MUT,MUT.L,FTSE 250,trust
+Murray International Trust,MYI,MYI.L,FTSE 250,trust
+NB Private Equity Partners,NBPE,NBPE.L,FTSE 250,trust
+NCC Group,NCC,NCC.L,FTSE 250,company
+Ninety One,N91,N91.L,FTSE 250,company
+North Atlantic Smaller Companies Investment Trust,NAS,NAS.L,FTSE 250,trust
+Oakley Capital Investments,OCI,OCI.L,FTSE 250,trust
+Ocado Group,OCDO,OCDO.L,FTSE 250,company
+OSB Group,OSB,OSB.L,FTSE 250,company
+Oxford Biomedica,OXB,OXB.L,FTSE 250,company
+Oxford Instruments,OXIG,OXIG.L,FTSE 250,company
+Oxford Nanopore Technologies,ONT,ONT.L,FTSE 250,company
+Pacific Horizon Investment Trust,PHI,PHI.L,FTSE 250,trust
+PageGroup,PAGE,PAGE.L,FTSE 250,company
+Pan African Resources,PAF,PAF.L,FTSE 250,company
+Pantheon Infrastructure,PINT,PINT.L,FTSE 250,trust
+Pantheon International,PIN,PIN.L,FTSE 250,trust
+Paragon Banking Group,PAG,PAG.L,FTSE 250,company
+Partners Group Private Equity,PEY,PEY.L,FTSE 250,trust
+Patria Private Equity Trust,PPET,PPET.L,FTSE 250,trust
+Pennon Group,PNN,PNN.L,FTSE 250,company
+Personal Assets Trust,PNL,PNL.L,FTSE 250,trust
+Pets at Home,PETS,PETS.L,FTSE 250,company
+Playtech,PTEC,PTEC.L,FTSE 250,company
+Plus500,PLUS,PLUS.L,FTSE 250,company
+Polar Capital Global Healthcare Trust,PCGH,PCGH.L,FTSE 250,trust
+Pollen Street Group,POLN,POLN.L,FTSE 250,company
+PPHE Hotel Group,PPH,PPH.L,FTSE 250,company
+Premier Foods,PFD,PFD.L,FTSE 250,company
+Primary Health Properties,PHP,PHP.L,FTSE 250,company
+Princes Group,PRN,PRN.L,FTSE 250,company
+Qinetiq,QQ,QQ.L,FTSE 250,company
+Quilter,QLT,QLT.L,FTSE 250,company
+Rank Group,RNK,RNK.L,FTSE 250,company
+Raspberry Pi Holdings,RPI,RPI.L,FTSE 250,company
+Rathbones,RAT,RAT.L,FTSE 250,company
+Renishaw,RSW,RSW.L,FTSE 250,company
+RHI Magnesita,RHIM,RHIM.L,FTSE 250,company
+Rightmove,RMV,RMV.L,FTSE 250,company
+RIT Capital Partners,RCP,RCP.L,FTSE 250,trust
+Rosebank Industries,ROSE,ROSE.L,FTSE 250,company
+Rotork,ROR,ROR.L,FTSE 250,company
+RS Group,RS1,RS1.L,FTSE 250,company
+RTW Biotech Opportunities,RTW,RTW.L,FTSE 250,trust
+Ruffer Investment Company,RICA,RICA.L,FTSE 250,trust
+Safestore,SAFE,SAFE.L,FTSE 250,company
+Saga,SAGA,SAGA.L,FTSE 250,company
+Savills,SVS,SVS.L,FTSE 250,company
+Schiehallion Fund,MNTN,MNTN.L,FTSE 250,trust
+Schroder Asian Total Return Investment Company,ATR,ATR.L,FTSE 250,trust
+Schroder AsiaPacific Fund,SDP,SDP.L,FTSE 250,trust
+Schroder Oriental Income Fund,SOI,SOI.L,FTSE 250,trust
+Scottish American Investment Company,SAIN,SAIN.L,FTSE 250,trust
+SDCL Energy Efficiency Income Trust,SEIT,SEIT.L,FTSE 250,trust
+Senior,SNR,SNR.L,FTSE 250,company
+Sequoia Economic Infrastructure Income Fund,SEQI,SEQI.L,FTSE 250,trust
+Seraphim Space Investment Trust,SSIT,SSIT.L,FTSE 250,trust
+Serco,SRP,SRP.L,FTSE 250,company
+Shaftesbury Capital,SHC,SHC.L,FTSE 250,company
+Shawbrook Bank,SHAW,SHAW.L,FTSE 250,company
+Sirius Real Estate,SRE,SRE.L,FTSE 250,company
+Softcat,SCT,SCT.L,FTSE 250,company
+Spire Healthcare,SPI,SPI.L,FTSE 250,company
+SSP Group,SSPG,SSPG.L,FTSE 250,company
+Supermarket Income REIT,SUPR,SUPR.L,FTSE 250,company
+Syncona,SYNC,SYNC.L,FTSE 250,trust
+Target Healthcare REIT,THRL,THRL.L,FTSE 250,company
+Tate & Lyle,TATE,TATE.L,FTSE 250,company
+Taylor Wimpey,TW,TW.L,FTSE 250,company
+TBC Bank,TBCG,TBCG.L,FTSE 250,company
+Telecom Plus,TEP,TEP.L,FTSE 250,company
+Temple Bar Investment Trust,TMPL,TMPL.L,FTSE 250,trust
+Templeton Emerging Markets Investment Trust,TEM,TEM.L,FTSE 250,trust
+The Renewables Infrastructure Group,TRIG,TRIG.L,FTSE 250,trust
+THG,THG,THG.L,FTSE 250,company
+TP ICAP,TCAP,TCAP.L,FTSE 250,company
+Trainline,TRN,TRN.L,FTSE 250,company
+Travis Perkins,TPK,TPK.L,FTSE 250,company
+TR Property Investment Trust,TRY,TRY.L,FTSE 250,trust
+Trustpilot,TRST,TRST.L,FTSE 250,company
+Twentyfour Income Fund,TFIF,TFIF.L,FTSE 250,trust
+Unite Group,UTG,UTG.L,FTSE 250,company
+Utilico Emerging Markets,UEM,UEM.L,FTSE 250,trust
+Vesuvius,VSVS,VSVS.L,FTSE 250,company
+Victrex,VCT,VCT.L,FTSE 250,company
+Vietnam Enterprise Investments,VEIL,VEIL.L,FTSE 250,trust
+VinaCapital Vietnam Opportunity Fund,VOF,VOF.L,FTSE 250,trust
+Vistry Group,VTY,VTY.L,FTSE 250,company
+Volution Group,FAN,FAN.L,FTSE 250,company
+Watches of Switzerland,WOSG,WOSG.L,FTSE 250,company
+Wetherspoons,JDW,JDW.L,FTSE 250,company
+WHSmith,SMWH,SMWH.L,FTSE 250,company
+Wickes,WIX,WIX.L,FTSE 250,company
+Wizz Air,WIZZ,WIZZ.L,FTSE 250,company
+Workspace Group,WKP,WKP.L,FTSE 250,company
+Worldwide Healthcare Trust,WWH,WWH.L,FTSE 250,trust
+WPP,WPP,WPP.L,FTSE 250,company
+XP Power,XPP,XPP.L,FTSE 250,company
+XPS Pensions,XPS,XPS.L,FTSE 250,company
+Zigup,ZIG,ZIG.L,FTSE 250,company

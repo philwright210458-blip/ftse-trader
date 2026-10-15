@@ -1,0 +1,87 @@
+# FTSE Watch: re-checks the shortlist from today's full scan every 15 minutes,
+# 10:16 to 12:16 UK time, Monday to Friday.
+#
+# GitHub's clock is UTC, so the schedule covers both summer and winter times and
+# a quick check only lets through runs between 10:10 and 12:30 UK time. Runs
+# outside that window stop after a few seconds.
+#
+# If GitHub starts a run late, or two runs see the same 15-minute candle, the
+# scanner notices there's no new candle and records nothing, so late or doubled
+# runs do no harm.
+
+name: FTSE Watch
+
+on:
+  schedule:
+    - cron: "1,16,31,46 9-11 * * 1-5"
+    - cron: "1,16 12 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftse-data
+  cancel-in-progress: false
+
+jobs:
+  check-time:
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.check.outputs.go }}
+    steps:
+      - id: check
+        run: |
+          now=$(TZ=Europe/London date +%H%M)
+          echo "UK time now: $(TZ=Europe/London date '+%H:%M %Z')"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || { [ "$now" -ge 1010 ] && [ "$now" -le 1230 ]; }; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Outside the 10:10-12:30 UK watch window, so skipping."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  watch:
+    needs: check-time
+    if: needs.check-time.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install packages
+        run: pip install -r requirements.txt
+
+      - name: Run watch
+        run: |
+          set +e
+          python -u ftse_trade_scanner.py --watch --exclude-trusts 2>&1 | tee run_output.txt
+          code=${PIPESTATUS[0]}
+          if [ "$code" -ne 0 ] && grep -q "No usable data came back" run_output.txt; then
+            echo "::warning::No market data (market closed or Yahoo unavailable). Nothing recorded; this is not a fault."
+            exit 0
+          fi
+          if [ "$code" -ne 0 ] && grep -q "No full scan found for today" run_output.txt; then
+            echo "::error::No full scan found for today, so there's nothing to watch. Check the FTSE Full Scan run."
+          fi
+          exit $code
+
+      - name: Save results to the repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add --all scan_data
+          git add --all -- ftse_scan_latest.xlsx 2>/dev/null || true
+          if git diff --cached --quiet; then echo "Nothing new to save."; exit 0; fi
+          git commit -m "Watch $(TZ=Europe/London date '+%Y-%m-%d %H:%M')"
+          for attempt in 1 2 3; do
+            git pull --rebase && git push && exit 0
+            sleep 15
+          done
+          echo "::error::Could not save results to the repo after 3 attempts."
+          exit 1

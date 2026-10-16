@@ -1,20 +1,12 @@
-# FTSE Watch: re-checks the shortlist from today's full scan every 15 minutes,
-# 10:16 to 12:16 UK time, Monday to Friday.
+# FTSE Watch: re-checks the shortlist from today's full scan. Started every
+# 15 minutes from 10:16 to 12:16 UK time (Mon-Fri) by a cron-job.org timer.
 #
-# GitHub's clock is UTC, so the schedule covers both summer and winter times and
-# a quick check only lets through runs between 10:10 and 12:30 UK time. Runs
-# outside that window stop after a few seconds.
-#
-# If GitHub starts a run late, or two runs see the same 15-minute candle, the
-# scanner notices there's no new candle and records nothing, so late or doubled
-# runs do no harm.
+# If two runs see the same 15-minute candle, the scanner notices there's no new
+# candle and records nothing, so a doubled or late run does no harm.
 
 name: FTSE Watch
 
 on:
-  schedule:
-    - cron: "1,16,31,46 9-11 * * 1-5"
-    - cron: "1,16 12 * * 1-5"
   workflow_dispatch:
 
 permissions:
@@ -25,25 +17,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  check-time:
-    runs-on: ubuntu-24.04   # pinned so the Ubuntu 26 switch (19 Oct 2026) cannot break it
-    outputs:
-      go: ${{ steps.check.outputs.go }}
-    steps:
-      - id: check
-        run: |
-          now=$(TZ=Europe/London date +%H%M)
-          echo "UK time now: $(TZ=Europe/London date '+%H:%M %Z')"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || { [ "$now" -ge 1010 ] && [ "$now" -le 1230 ]; }; then
-            echo "go=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Outside the 10:10-12:30 UK watch window, so skipping."
-            echo "go=false" >> "$GITHUB_OUTPUT"
-          fi
-
   watch:
-    needs: check-time
-    if: needs.check-time.outputs.go == 'true'
     runs-on: ubuntu-24.04   # pinned so the Ubuntu 26 switch (19 Oct 2026) cannot break it
     timeout-minutes: 15
     steps:

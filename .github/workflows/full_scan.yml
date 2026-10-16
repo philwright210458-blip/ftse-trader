@@ -1,25 +1,21 @@
-# FTSE Full Scan: runs the full scanner at 10:00 UK time, Monday to Friday.
+# FTSE Full Scan: the full scanner, started at 10:00 UK time (Mon-Fri) by a
+# cron-job.org timer. GitHub's own scheduler proved too unreliable (runs
+# started hours late or not at all), so this workflow only runs when started
+# from outside or by hand.
 #
-# GitHub's clock is UTC, so this is scheduled twice (09:01 and 10:01 UTC) and a
-# quick check only lets through the one that lands at 10:xx UK time. That keeps
-# it right through the clock changes without editing anything.
-#
-# Manual runs ("Run workflow" button) default to a TEST: 10 shares only, nothing
-# saved to the repo, results downloadable from the run page. Untick "test" to do
-# a real full scan by hand (for example, if the 10:00 one was missed).
+# Manual runs ("Run workflow" button) are REAL full scans unless you tick
+# "test", which scans only 10 shares, saves nothing to the repo, and makes the
+# results downloadable from the run page.
 
 name: FTSE Full Scan
 
 on:
-  schedule:
-    - cron: "1 9 * * 1-5"    # 10:01 UK in summer time (BST)
-    - cron: "1 10 * * 1-5"   # 10:01 UK in winter time (GMT)
   workflow_dispatch:
     inputs:
       test:
         description: "Test run: scan only 10 shares and don't save anything to the repo"
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: write
@@ -30,29 +26,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  check-time:
-    runs-on: ubuntu-24.04   # pinned so the Ubuntu 26 switch (19 Oct 2026) cannot break it
-    outputs:
-      go: ${{ steps.check.outputs.go }}
-    steps:
-      - id: check
-        run: |
-          now=$(TZ=Europe/London date +%H%M)
-          echo "UK time now: $(TZ=Europe/London date '+%H:%M %Z')"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || { [ "$now" -ge 1000 ] && [ "$now" -lt 1100 ]; }; then
-            echo "go=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Not 10:xx UK time (this is the other half of the summer/winter pair), so skipping."
-            echo "go=false" >> "$GITHUB_OUTPUT"
-          fi
-
   scan:
-    needs: check-time
-    if: needs.check-time.outputs.go == 'true'
     runs-on: ubuntu-24.04   # pinned so the Ubuntu 26 switch (19 Oct 2026) cannot break it
     timeout-minutes: 30
     env:
-      TEST: ${{ github.event_name == 'workflow_dispatch' && inputs.test }}
+      TEST: ${{ inputs.test }}
     steps:
       - uses: actions/checkout@v4
 

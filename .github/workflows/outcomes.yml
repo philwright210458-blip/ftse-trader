@@ -1,13 +1,11 @@
-# FTSE Outcomes: scores past ideas and updates the mock trades at 17:05 UK time,
-# Monday to Friday. Safe to run by hand at any time: it only resolves ideas
-# whose holding period has finished, and remembers what it has already done.
+# FTSE Outcomes: scores past ideas and updates the mock trades. Started at 17:05
+# UK time (Mon-Fri) by a cron-job.org timer. Safe to run by hand at any time: it
+# only resolves ideas whose holding period has finished, and remembers what it
+# has already done.
 
 name: FTSE Outcomes
 
 on:
-  schedule:
-    - cron: "5 16 * * 1-5"   # 17:05 UK in summer time (BST)
-    - cron: "5 17 * * 1-5"   # 17:05 UK in winter time (GMT)
   workflow_dispatch:
 
 permissions:
@@ -18,25 +16,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  check-time:
-    runs-on: ubuntu-24.04   # pinned so the Ubuntu 26 switch (19 Oct 2026) cannot break it
-    outputs:
-      go: ${{ steps.check.outputs.go }}
-    steps:
-      - id: check
-        run: |
-          now=$(TZ=Europe/London date +%H%M)
-          echo "UK time now: $(TZ=Europe/London date '+%H:%M %Z')"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || { [ "$now" -ge 1700 ] && [ "$now" -lt 1800 ]; }; then
-            echo "go=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Not 17:xx UK time (this is the other half of the summer/winter pair), so skipping."
-            echo "go=false" >> "$GITHUB_OUTPUT"
-          fi
-
   outcomes:
-    needs: check-time
-    if: needs.check-time.outputs.go == 'true'
     runs-on: ubuntu-24.04   # pinned so the Ubuntu 26 switch (19 Oct 2026) cannot break it
     timeout-minutes: 30
     steps:

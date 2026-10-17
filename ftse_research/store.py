@@ -1,11 +1,11 @@
 """SQLite research journal; immutable first observations and transactional ledger."""
+
 from contextlib import contextmanager
 from pathlib import Path
 import json
 import sqlite3
 
 from .models import Candle, iso, key, serialise, stamp
-
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -20,6 +20,8 @@ CREATE INDEX IF NOT EXISTS candles_available ON candles(available_at);
 CREATE TABLE IF NOT EXISTS candle_revisions (
  id TEXT PRIMARY KEY, ticker TEXT NOT NULL, interval TEXT NOT NULL, start TEXT NOT NULL,
  observed_at TEXT NOT NULL, payload TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS candle_revisions_identity ON candle_revisions(ticker,interval,start,observed_at);
+CREATE INDEX IF NOT EXISTS candle_revisions_observed ON candle_revisions(ticker,interval,observed_at);
 CREATE TABLE IF NOT EXISTS signals (
  id TEXT PRIMARY KEY, ticker TEXT NOT NULL, strategy TEXT NOT NULL, direction TEXT NOT NULL,
  session TEXT NOT NULL, signal_at TEXT NOT NULL, available_at TEXT NOT NULL,
@@ -90,8 +92,10 @@ class ResearchStore:
         return json.loads(row[0]) if row else default
 
     def set_metadata(self, name, value):
-        self.connection.execute("INSERT INTO metadata VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                                (name, serialise(value)))
+        self.connection.execute(
+            "INSERT INTO metadata VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (name, serialise(value)),
+        )
 
     def universe(self):
         return [json.loads(row["payload"]) for row in self.rows("SELECT payload FROM universe ORDER BY ticker")]
@@ -114,22 +118,56 @@ class ResearchStore:
                     counts["incomplete"] += 1
                     continue
                 data = candle.to_dict()
-                existing = self.connection.execute("SELECT * FROM candles WHERE ticker=? AND interval=? AND start=?",
-                    (data["ticker"], data["interval"], data["start"])).fetchone()
+                existing = self.connection.execute(
+                    "SELECT * FROM candles WHERE ticker=? AND interval=? AND start=?",
+                    (data["ticker"], data["interval"], data["start"]),
+                ).fetchone()
                 if existing:
                     price_keys = ("open", "high", "low", "close", "volume", "adjusted_close", "quote_unit")
-                    if any(existing[name] != data[name] for name in price_keys):
-                        revision_id = key("revision", serialise({name: data[name] for name in price_keys}),
-                                          data["ticker"], data["interval"], data["start"])
-                        cursor = self.connection.execute("INSERT OR IGNORE INTO candle_revisions VALUES(?,?,?,?,?,?)",
-                            (revision_id, data["ticker"], data["interval"], data["start"], data["fetched_at"], serialise(data)))
-                        counts["revisions"] += cursor.rowcount
+                    latest_revision = self.connection.execute(
+                        "SELECT payload FROM candle_revisions WHERE ticker=? AND interval=? AND start=? ORDER BY observed_at DESC,rowid DESC LIMIT 1",
+                        (data["ticker"], data["interval"], data["start"]),
+                    ).fetchone()
+                    latest = json.loads(latest_revision[0]) if latest_revision else dict(existing)
+                    if stamp(existing["fetched_at"]) > stamp(latest["fetched_at"]):
+                        latest = dict(existing)
+                    changed = any(latest[name] != data[name] for name in price_keys)
+                    # Daily adjustments are point-in-time observations. Keep
+                    # later identical observations too: otherwise an imported
+                    # older revision could erase a subsequently confirmed value.
+                    preserve_observation = data["interval"] == "1d" and data["fetched_at"] != latest["fetched_at"]
+                    if changed or preserve_observation:
+                        revision_id = key(
+                            "revision",
+                            data["fetched_at"],
+                            serialise({name: data[name] for name in price_keys}),
+                            data["ticker"],
+                            data["interval"],
+                            data["start"],
+                        )
+                        cursor = self.connection.execute(
+                            "INSERT OR IGNORE INTO candle_revisions VALUES(?,?,?,?,?,?)",
+                            (
+                                revision_id,
+                                data["ticker"],
+                                data["interval"],
+                                data["start"],
+                                data["fetched_at"],
+                                serialise(data),
+                            ),
+                        )
+                        if changed and cursor.rowcount:
+                            counts["revisions"] += 1
+                        else:
+                            counts["duplicates"] += 1
                     else:
                         counts["duplicates"] += 1
                     continue
                 names = list(data)
-                self.connection.execute(f"INSERT INTO candles ({','.join(names)}) VALUES ({','.join('?' for _ in names)})",
-                                        tuple(data[name] for name in names))
+                self.connection.execute(
+                    f"INSERT INTO candles ({','.join(names)}) VALUES ({','.join('?' for _ in names)})",
+                    tuple(data[name] for name in names),
+                )
                 counts["inserted"] += 1
         return counts
 
@@ -143,7 +181,9 @@ class ResearchStore:
             clauses.append("start>=?")
             args.append(iso(since))
         clause = (" AND " + " AND ".join(clauses)) if clauses else ""
-        return self.rows("SELECT * FROM candles WHERE ticker=? AND interval=?" + clause + " ORDER BY start", tuple(args))
+        return self.rows(
+            "SELECT * FROM candles WHERE ticker=? AND interval=?" + clause + " ORDER BY start", tuple(args)
+        )
 
     def daily_as_of(self, ticker, as_of):
         """Reconcile adjustment revisions available by the observation time only.
@@ -153,10 +193,14 @@ class ResearchStore:
         Original rows and every changed observation remain in the journal.
         """
         result = {row["start"]: row for row in self.candles(ticker, "1d", as_of)}
-        for row in self.rows("SELECT payload FROM candle_revisions WHERE ticker=? AND interval='1d' AND observed_at<=? ORDER BY observed_at,id",
-                             (ticker, iso(as_of))):
+        for row in self.rows(
+            "SELECT payload FROM candle_revisions WHERE ticker=? AND interval='1d' AND observed_at<=? ORDER BY observed_at,rowid",
+            (ticker, iso(as_of)),
+        ):
             data = json.loads(row["payload"])
-            result[data["start"]] = data
+            current = result.get(data["start"])
+            if current is None or stamp(data["fetched_at"]) >= stamp(current["fetched_at"]):
+                result[data["start"]] = data
         return sorted(result.values(), key=lambda row: row["start"])
 
     def payloads(self, table, where="", args=()):
@@ -165,8 +209,10 @@ class ResearchStore:
         return [json.loads(row["payload"]) for row in self.rows(f"SELECT payload FROM {table} {where}", args)]
 
     def event(self, identifier, at, kind, payload):
-        self.connection.execute("INSERT OR IGNORE INTO events VALUES(?,?,?,?)",
-                                (identifier, iso(at), kind, serialise({"id": identifier, "at": iso(at), "kind": kind, **payload})))
+        self.connection.execute(
+            "INSERT OR IGNORE INTO events VALUES(?,?,?,?)",
+            (identifier, iso(at), kind, serialise({"id": identifier, "at": iso(at), "kind": kind, **payload})),
+        )
 
     def backup(self, destination):
         """SQLite backup API includes committed WAL contents, unlike copying the DB file."""

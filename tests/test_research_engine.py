@@ -1,4 +1,5 @@
 """Research regressions use fictional records and no network or market claims."""
+
 import json
 from pathlib import Path
 import tempfile
@@ -11,7 +12,6 @@ from ftse_research import Candle, ResearchConfig, ResearchEngine, ResearchStore,
 from ftse_research.models import iso, stamp
 from ftse_sessions import session_open_close
 
-
 DAY = "2026-10-16"
 
 
@@ -19,18 +19,49 @@ def at(clock, day=DAY):
     return pd.Timestamp(f"{day} {clock}", tz="Europe/London")
 
 
-def candle(ticker="TEST", start="09:00", open=1000, close=1000, high=1002,
-           low=998, volume=100, fetched=None, day=DAY, quote_unit="GBp"):
+def candle(
+    ticker="TEST",
+    start="09:00",
+    open=1000,
+    close=1000,
+    high=1002,
+    low=998,
+    volume=100,
+    fetched=None,
+    day=DAY,
+    quote_unit="GBp",
+):
     begin = at(start, day)
     end = begin + pd.Timedelta(minutes=15)
-    return Candle(ticker, iso(begin), iso(end), open, high, low, close, volume,
-                  iso(fetched or end + pd.Timedelta(minutes=1)), quote_unit=quote_unit,
-                  source="synthetic-test")
+    return Candle(
+        ticker,
+        iso(begin),
+        iso(end),
+        open,
+        high,
+        low,
+        close,
+        volume,
+        iso(fetched or end + pd.Timedelta(minutes=1)),
+        quote_unit=quote_unit,
+        source="synthetic-test",
+    )
 
 
 def signal(ticker="TEST", available="08:46", direction="Long", strategy="test", stop=980, target=1030):
-    return Signal(ticker, strategy, direction, iso(at("08:45")), iso(at(available)),
-                  stop, target, 1000, "GBp", 80, "Synthetic test signal")
+    return Signal(
+        ticker,
+        strategy,
+        direction,
+        iso(at("08:45")),
+        iso(at(available)),
+        stop,
+        target,
+        1000,
+        "GBp",
+        80,
+        "Synthetic test signal",
+    )
 
 
 class ResearchCase(unittest.TestCase):
@@ -39,7 +70,9 @@ class ResearchCase(unittest.TestCase):
         self.path = Path(self.directory.name) / "research.sqlite"
         self.store = ResearchStore(self.path)
         self.engine = ResearchEngine(self.store, ResearchConfig(stamp_duty_pct=0, spread_bps=0, slippage_bps=0))
-        self.engine.set_universe([{"ticker": "TEST", "company": "Fictional Test", "index": "FTSE 100", "quote_unit": "GBp"}])
+        self.engine.set_universe(
+            [{"ticker": "TEST", "company": "Fictional Test", "index": "FTSE 100", "quote_unit": "GBp"}]
+        )
 
     def tearDown(self):
         self.store.close()
@@ -92,8 +125,9 @@ class ResearchCase(unittest.TestCase):
 
     def test_adverse_gap_fills_at_open_not_stop(self):
         self.engine.run(at("08:46"), [signal()])
-        self.engine.ingest_candles([candle(start="09:00"),
-            candle(start="09:15", open=970, close=975, high=977, low=965)])
+        self.engine.ingest_candles(
+            [candle(start="09:00"), candle(start="09:15", open=970, close=975, high=977, low=965)]
+        )
         result = self.engine.run(at("09:31"), [])
         trade = result["paper"]["closed_trades"][0]
         self.assertEqual(trade["exit_price"], 970)
@@ -101,8 +135,9 @@ class ResearchCase(unittest.TestCase):
 
     def test_missing_exit_interval_keeps_unresolved_until_recovered(self):
         self.engine.run(at("08:46"), [signal()])
-        self.engine.ingest_candles([candle(start="09:00"),
-            candle(start="09:30", open=1000, close=1030, high=1040, low=998)])
+        self.engine.ingest_candles(
+            [candle(start="09:00"), candle(start="09:30", open=1000, close=1030, high=1040, low=998)]
+        )
         first = self.engine.run(at("09:46"), [])
         self.assertEqual(len(first["paper"]["positions"]), 1)
         self.assertFalse(first["paper"]["closed_trades"])
@@ -112,8 +147,9 @@ class ResearchCase(unittest.TestCase):
         self.assertEqual(stamp(recovered["paper"]["closed_trades"][0]["exit_at"]), at("09:30"))
 
     def test_missing_close_never_invents_a_session_timeout(self):
-        self.engine.run(at("15:46"), [Signal("TEST", "test", "Long", iso(at("15:45")),
-            iso(at("15:46")), 900, 1100, 1000)])
+        self.engine.run(
+            at("15:46"), [Signal("TEST", "test", "Long", iso(at("15:45")), iso(at("15:46")), 900, 1100, 1000)]
+        )
         self.engine.ingest_candles([candle(start="16:00")])
         result = self.engine.run(at("17:00"), [])
         self.assertEqual(len(result["paper"]["positions"]), 1)
@@ -180,7 +216,7 @@ class ResearchCase(unittest.TestCase):
         counts = self.engine.ingest_candles([original, forming])
         self.assertEqual(counts, {"inserted": 1, "duplicates": 0, "revisions": 0, "incomplete": 1})
         result = self.engine.ingest_candles([original, changed, changed])
-        self.assertEqual(result["duplicates"], 1)
+        self.assertEqual(result["duplicates"], 2)
         self.assertEqual(result["revisions"], 1)
         self.assertEqual(self.store.candles("TEST")[0]["close"], 1000)
 
@@ -222,9 +258,16 @@ class ResearchCase(unittest.TestCase):
             stamp("2026-10-16 09:00")
 
     def test_legacy_records_are_visible_but_not_corrected_paper_evidence(self):
-        self.store.connection.execute("INSERT INTO legacy_records VALUES(?,?,?,?,?)",
-            ("legacy-example", "scan_data/outcomes.csv", "filehash", 2,
-             json.dumps({"ticker": "TEST", "pnl": "100000", "validation": "approved"})))
+        self.store.connection.execute(
+            "INSERT INTO legacy_records VALUES(?,?,?,?,?)",
+            (
+                "legacy-example",
+                "scan_data/outcomes.csv",
+                "filehash",
+                2,
+                json.dumps({"ticker": "TEST", "pnl": "100000", "validation": "approved"}),
+            ),
+        )
         result = self.engine.snapshot(at("09:16"))
         self.assertEqual(result["legacy"]["counts"], {"scan_data/outcomes.csv": 1})
         self.assertEqual(result["legacy"]["records"][0]["validation"], "legacy-unverified")
@@ -235,22 +278,53 @@ class ResearchCase(unittest.TestCase):
         records = []
         for day, raw, adjusted in (("2026-10-14", 1000, 1000), ("2026-10-15", 530, 530)):
             start, end = session_open_close(day)
-            records.append(Candle("TEST", iso(start), iso(end), raw, raw + 2, raw - 2, raw, 1000,
-                iso(stamp(end) + pd.Timedelta(minutes=1)), "1d", "GBp", adjusted, "synthetic-test"))
+            records.append(
+                Candle(
+                    "TEST",
+                    iso(start),
+                    iso(end),
+                    raw,
+                    raw + 2,
+                    raw - 2,
+                    raw,
+                    1000,
+                    iso(stamp(end) + pd.Timedelta(minutes=1)),
+                    "1d",
+                    "GBp",
+                    adjusted,
+                    "synthetic-test",
+                )
+            )
         self.engine.ingest_candles(records)
         original = records[0]
-        revised = Candle("TEST", original.start, original.end, 1000, 1002, 998, 1000, 1000,
-                         iso(at("17:00", "2026-10-15")), "1d", "GBp", 500, "synthetic-test")
+        revised = Candle(
+            "TEST",
+            original.start,
+            original.end,
+            1000,
+            1002,
+            998,
+            1000,
+            1000,
+            iso(at("17:00", "2026-10-15")),
+            "1d",
+            "GBp",
+            500,
+            "synthetic-test",
+        )
         self.engine.ingest_candles([revised])
         before = self.engine.snapshot(at("07:45"))["watchlist"][0]
         self.assertAlmostEqual(before["previous_change_pct"], 6.0)
         self.assertTrue(before["is_mover"])
         self.assertEqual(before["previous_close"], 530)
         self.assertEqual(before["status"], "unavailable")
-        self.engine.ingest_candles([
-            candle(start="08:00", open=530, close=529, high=531, low=528),
-            candle(start="08:15", open=529, close=528, high=530, low=527),
-            candle(start="08:30", open=528, close=527, high=529, low=526)])
+        self.engine.ingest_candles(
+            [
+                candle(start="08:00", open=530, close=529, high=531, low=528),
+                candle(start="08:15", open=529, close=528, high=530, low=527),
+                candle(start="08:30", open=528, close=527, high=529, low=526),
+            ]
+        )
         after = self.engine.snapshot(at("08:46"))["watchlist"][0]
         self.assertEqual(after["status"], "reversal")
         self.assertEqual(after["opening_gap_pct"], 0)
@@ -258,14 +332,112 @@ class ResearchCase(unittest.TestCase):
 
     def test_no_adjusted_previous_close_means_no_inferred_mover(self):
         start, end = session_open_close("2026-10-15")
-        self.engine.ingest_candles([Candle("TEST", iso(start), iso(end), 1000, 1002, 998, 1000, 10,
-            iso(stamp(end) + pd.Timedelta(minutes=1)), "1d", "GBp", None, "synthetic-test")])
+        self.engine.ingest_candles(
+            [
+                Candle(
+                    "TEST",
+                    iso(start),
+                    iso(end),
+                    1000,
+                    1002,
+                    998,
+                    1000,
+                    10,
+                    iso(stamp(end) + pd.Timedelta(minutes=1)),
+                    "1d",
+                    "GBp",
+                    None,
+                    "synthetic-test",
+                )
+            ]
+        )
         watch = self.engine.snapshot(at("07:45"))["watchlist"][0]
         self.assertIsNone(watch["previous_change_pct"])
         self.assertFalse(watch["is_mover"])
 
+    def test_daily_adjustments_revert_and_repeat_at_distinct_observation_times(self):
+        start, end = session_open_close("2026-10-15")
+
+        def daily(adjusted, observed):
+            return Candle(
+                "TEST",
+                iso(start),
+                iso(end),
+                100,
+                101,
+                99,
+                100,
+                10,
+                iso(at(observed, "2026-10-15")),
+                "1d",
+                "GBp",
+                adjusted,
+                "synthetic-test",
+            )
+
+        self.engine.ingest_candles([daily(100, "17:00"), daily(90, "18:00"), daily(100, "19:00")])
+        self.assertEqual(self.store.daily_as_of("TEST", at("18:30", "2026-10-15"))[0]["adjusted_close"], 90)
+        self.assertEqual(self.store.daily_as_of("TEST", at("19:30", "2026-10-15"))[0]["adjusted_close"], 100)
+        self.engine.ingest_candles([daily(90, "20:00"), daily(95, "21:00"), daily(90, "22:00")])
+        self.assertEqual(self.store.daily_as_of("TEST", at("21:30", "2026-10-15"))[0]["adjusted_close"], 95)
+        self.assertEqual(self.store.daily_as_of("TEST", at("22:30", "2026-10-15"))[0]["adjusted_close"], 90)
+        self.assertEqual(len(self.store.rows("SELECT id FROM candle_revisions")), 5)
+        self.engine.ingest_candles([daily(90, "22:00")])
+        self.assertEqual(len(self.store.rows("SELECT id FROM candle_revisions")), 5)
+
+    def test_daily_identical_later_observation_survives_out_of_order_revision(self):
+        start, end = session_open_close("2026-10-15")
+
+        def daily(adjusted, observed):
+            return Candle(
+                "TEST",
+                iso(start),
+                iso(end),
+                100,
+                101,
+                99,
+                100,
+                10,
+                iso(at(observed, "2026-10-15")),
+                "1d",
+                "GBp",
+                adjusted,
+                "synthetic-test",
+            )
+
+        self.engine.ingest_candles([daily(100, "17:00"), daily(100, "20:00"), daily(90, "18:00")])
+        self.assertEqual(self.store.daily_as_of("TEST", at("18:30", "2026-10-15"))[0]["adjusted_close"], 90)
+        self.assertEqual(self.store.daily_as_of("TEST", at("21:00", "2026-10-15"))[0]["adjusted_close"], 100)
+
+    def test_later_original_observation_outranks_imported_older_revision(self):
+        start, end = session_open_close("2026-10-15")
+        for adjusted, observed in ((100, "20:00"), (90, "18:00")):
+            self.engine.ingest_candles(
+                [
+                    Candle(
+                        "TEST",
+                        iso(start),
+                        iso(end),
+                        100,
+                        101,
+                        99,
+                        100,
+                        10,
+                        iso(at(observed, "2026-10-15")),
+                        "1d",
+                        "GBp",
+                        adjusted,
+                        "synthetic-test",
+                    )
+                ]
+            )
+        self.assertEqual(self.store.daily_as_of("TEST", at("18:30", "2026-10-15"))[0]["adjusted_close"], 90)
+        self.assertEqual(self.store.daily_as_of("TEST", at("21:00", "2026-10-15"))[0]["adjusted_close"], 100)
+
     def test_daily_loss_limit_blocks_next_strategy_without_reset(self):
-        self.engine = ResearchEngine(self.store, ResearchConfig(stamp_duty_pct=0, spread_bps=0, slippage_bps=0, daily_loss_limit_pct=.1))
+        self.engine = ResearchEngine(
+            self.store, ResearchConfig(stamp_duty_pct=0, spread_bps=0, slippage_bps=0, daily_loss_limit_pct=0.1)
+        )
         self.engine.run(at("08:46"), [signal()])
         self.engine.ingest_candles([candle(start="09:00", low=975)])
         self.engine.run(at("09:16"), [])
@@ -279,7 +451,9 @@ class ResearchCase(unittest.TestCase):
     def test_account_exposure_cannot_exceed_virtual_cash(self):
         # Capital cannot change after journal creation, so use a fresh journal.
         with ResearchStore(":memory:") as store:
-            engine = ResearchEngine(store, ResearchConfig(capital=200, max_positions=3, stamp_duty_pct=0, spread_bps=0, slippage_bps=0))
+            engine = ResearchEngine(
+                store, ResearchConfig(capital=200, max_positions=3, stamp_duty_pct=0, spread_bps=0, slippage_bps=0)
+            )
             engine.set_universe([{"ticker": f"TEST{i}", "quote_unit": "GBp"} for i in range(3)])
             engine.run(at("08:46"), [signal(ticker=f"TEST{i}") for i in range(3)])
             engine.ingest_candles([candle(ticker=f"TEST{i}", start="09:00") for i in range(3)])
@@ -288,20 +462,23 @@ class ResearchCase(unittest.TestCase):
             self.assertTrue(any("Insufficient" in row["reason"] for row in result["candidates"]))
 
     def test_late_exit_observation_does_not_free_capacity_for_earlier_entry(self):
-        self.engine = ResearchEngine(self.store, ResearchConfig(max_positions=1, stamp_duty_pct=0, spread_bps=0, slippage_bps=0))
+        self.engine = ResearchEngine(
+            self.store, ResearchConfig(max_positions=1, stamp_duty_pct=0, spread_bps=0, slippage_bps=0)
+        )
         self.engine.run(at("08:46"), [signal()])
         self.engine.ingest_candles([candle(start="09:00")])
         self.engine.run(at("09:16"), [])
         later = Signal("TEST", "second-strategy", "Long", iso(at("09:15")), iso(at("09:17")), 980, 1030, 1000)
         self.engine.run(at("09:17"), [later])
-        self.engine.ingest_candles([candle(start="09:15", high=1040, fetched=at("09:31")),
-                                  candle(start="09:30")])
+        self.engine.ingest_candles([candle(start="09:15", high=1040, fetched=at("09:31")), candle(start="09:30")])
         result = self.engine.run(at("09:46"), [])
         self.assertEqual(len(result["paper"]["closed_trades"]), 1)
         self.assertTrue(any("Maximum concurrent" in row["reason"] for row in result["candidates"]))
 
     def test_equal_time_candidates_allocate_in_score_order(self):
-        self.engine = ResearchEngine(self.store, ResearchConfig(max_positions=1, stamp_duty_pct=0, spread_bps=0, slippage_bps=0))
+        self.engine = ResearchEngine(
+            self.store, ResearchConfig(max_positions=1, stamp_duty_pct=0, spread_bps=0, slippage_bps=0)
+        )
         low = Signal("TEST", "low-score", "Long", iso(at("08:45")), iso(at("08:46")), 980, 1030, 1000, score=10)
         high = Signal("TEST", "high-score", "Long", iso(at("08:45")), iso(at("08:46")), 980, 1030, 1000, score=90)
         self.engine.run(at("08:46"), [low, high])
@@ -313,7 +490,9 @@ class ResearchCase(unittest.TestCase):
         self.engine.run(at("08:46"), [signal()])
         self.engine.ingest_candles([candle(start="09:00")])
         self.engine.run(at("09:16"), [])
-        self.engine = ResearchEngine(self.store, ResearchConfig(stamp_duty_pct=0, spread_bps=0, slippage_bps=0, commission_per_side=10))
+        self.engine = ResearchEngine(
+            self.store, ResearchConfig(stamp_duty_pct=0, spread_bps=0, slippage_bps=0, commission_per_side=10)
+        )
         self.engine.ingest_candles([candle(start="09:15", high=1040)])
         result = self.engine.run(at("09:31"), [])
         self.assertAlmostEqual(result["paper"]["closed_trades"][0]["pnl"], 3.0)
@@ -328,7 +507,7 @@ class ResearchCase(unittest.TestCase):
         self.assertTrue(result["evaluation"]["configuration_changed"])
 
     def test_purchase_duty_is_additional_to_confirmed_position_notional(self):
-        self.engine = ResearchEngine(self.store, ResearchConfig(stamp_duty_pct=.5, spread_bps=0, slippage_bps=0))
+        self.engine = ResearchEngine(self.store, ResearchConfig(stamp_duty_pct=0.5, spread_bps=0, slippage_bps=0))
         self.engine.run(at("08:46"), [signal()])
         self.engine.ingest_candles([candle(start="09:00")])
         opened = self.engine.run(at("09:16"), [])
@@ -343,7 +522,9 @@ class ResearchCase(unittest.TestCase):
 
     def test_entry_rejected_if_capital_covers_notional_but_not_duty(self):
         with ResearchStore(":memory:") as store:
-            engine = ResearchEngine(store, ResearchConfig(capital=100, stamp_duty_pct=.5, spread_bps=0, slippage_bps=0))
+            engine = ResearchEngine(
+                store, ResearchConfig(capital=100, stamp_duty_pct=0.5, spread_bps=0, slippage_bps=0)
+            )
             engine.set_universe([{"ticker": "TEST", "quote_unit": "GBp"}])
             engine.run(at("08:46"), [signal()])
             engine.ingest_candles([candle(start="09:00")])

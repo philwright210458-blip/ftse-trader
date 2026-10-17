@@ -13,10 +13,15 @@ for (const [file, type] of [
     body: await readFile(path.join(root, "public", file), "utf8"),
     type: type + "; charset=utf-8",
   };
-const api = await readFile(path.join(root, "api.mjs"), "utf8"),
-  worker = (await readFile(path.join(root, "worker.mjs"), "utf8"))
-    .replace(/^import .*?from '\.\/api\.mjs';\n/, "")
-    .replace("__EMBEDDED_ASSETS__", JSON.stringify(assets));
+const api = await readFile(path.join(root, "api.mjs"), "utf8");
+const workerSource = await readFile(path.join(root, "worker.mjs"), "utf8");
+const apiImport = /^import\s+\{[^}]+\}\s+from\s+["']\.\/api\.mjs["'];?\s*$/m;
+if (!apiImport.test(workerSource)) {
+  throw new Error("Expected the Worker API import before embedding source.");
+}
+const worker = workerSource
+  .replace(apiImport, "")
+  .replace("__EMBEDDED_ASSETS__", JSON.stringify(assets));
 await mkdir(path.join(root, "dist", "server"), { recursive: true });
 await writeFile(
   path.join(root, "dist", "server", "index.js"),

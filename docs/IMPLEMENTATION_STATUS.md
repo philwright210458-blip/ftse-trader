@@ -28,12 +28,12 @@ The £1,000 sample account, three-position limit, 2% virtual daily loss guard an
 ## Verification evidence
 
 - All 90 Python regression tests pass. The suite covers original defects, exchange sessions, data ingestion, unit conversion, immutable revisions, future entry timing, conservative exit chronology, costs, allocation and persistence, legacy isolation, backup, scheduler locking and missed windows.
-- All 11 Node regression tests pass. The suite exercises the actual HTTP API, authentication, duplicate/stale/conflicting updates, persisted readback, archived exports, legacy isolation, synthetic provenance and production D1 SQL against SQLite.
+- All 12 Node regression tests pass. The suite exercises the actual HTTP API, authentication, duplicate/stale/conflicting updates, persisted readback, archived exports, legacy isolation, synthetic provenance and production D1 SQL against SQLite.
 - A fictional Python ledger was published through the real local API and its stored revision was independently read back. The dashboard was inspected using that API response.
 - A single read-only Vodafone collection returned 193 validated daily/intraday candles and no collection errors. This is source-access evidence, not proof of opening-session latency, future availability or all-symbol coverage.
 - Importing the original CSV archive inserted 645 raw rows; repeating the same import inserted zero rows and identified 645 duplicates. Those records are excluded from corrected paper balances and evaluation.
 - A separate SQLite backup passed integrity and table reconciliation checks.
-- The Docker image built successfully; its offline disabled tick exited without collecting or activating a schedule. The dashboard source build and generated Worker syntax were checked. Browser checks covered morning watch, share chart, paper portfolio, archive controls, synthetic labels and a 390-pixel layout without document overflow.
+- The Docker image built successfully; all 90 Python tests also pass in its offline Linux environment, and its disabled tick exited without collecting or activating a schedule. The dashboard source build and generated Worker syntax were checked. Browser checks covered morning watch, share chart, paper portfolio, archive controls, synthetic labels and a 390-pixel layout without document overflow.
 - The tracked workbook example in `docs/examples/ftse_outcomes_synthetic.xlsx` is explicitly fictional. Summary, Strategy Comparison and Breakdowns were rendered and inspected; arithmetic and detailed tabs have regression checks. Native Excel rendering remains unverified.
 
 ## Files deliberately preserved

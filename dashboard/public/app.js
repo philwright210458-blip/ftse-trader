@@ -1,5 +1,9 @@
 import { researchProvenance } from "./presentation.mjs";
+import { mountReplay, replayProvenance } from "./replay-ui.mjs";
+import { recordsCSV, reportText, downloadText } from "./insights-ui.mjs";
 const $ = (id) => document.getElementById(id);
+let replayContext = null,
+  beforeReplay = null;
 let snapshot = null,
   chosen = "",
   revision = null,
@@ -111,6 +115,18 @@ function generic(el, rows, message) {
   );
 }
 const descriptions = {
+  replay: [
+    "Session replay",
+    "Explore frozen evidence at your own pace, without changing the paper ledger.",
+  ],
+  journal: [
+    "Decision journal",
+    "Understand what was known, why a setup qualified and why the system waited.",
+  ],
+  report: [
+    "Daily report",
+    "A readable account of the selected session, decisions and data quality.",
+  ],
   watch: [
     "Morning watch",
     "Follow yesterday’s biggest movers from the opening bell.",
@@ -142,12 +158,13 @@ function route() {
   $("page-title").textContent = descriptions[view][0];
   $("page-description").textContent = descriptions[view][1];
   document.title = "FTSE Research | " + descriptions[view][0];
+  if (view !== "replay") replayController.pause();
   if (view === "detail") renderDetail();
 }
 function freshness() {
   const el = $("data-status");
-  $("return-latest").hidden = !archived;
-  $("refresh").hidden = archived;
+  $("return-latest").hidden = !archived || Boolean(replayContext);
+  $("refresh").hidden = archived || Boolean(replayContext);
   if (!snapshot) {
     el.className = "status warning";
     el.textContent =
@@ -156,7 +173,9 @@ function freshness() {
   }
   const s = snapshot,
     age =
-      (Date.now() - Date.parse(s.last_success_at || s.generated_at)) / 60000,
+      ((replayContext ? Date.parse(replayContext.at) : Date.now()) -
+        Date.parse(s.last_success_at || s.generated_at)) /
+      60000,
     stale = age > Math.max((s.health.expected_interval_minutes || 15) * 2, 5),
     failed = s.health.state === "failed";
   el.className =
@@ -166,7 +185,7 @@ function freshness() {
       : stale || ["stale", "degraded", "not-collected"].includes(s.health.state)
         ? "warning"
         : "");
-  el.textContent = `${archived ? "ARCHIVED SNAPSHOT · Automatic refresh paused · " : ""}${researchProvenance(snapshot, demo).statusPrefix}${failed ? "Scan failed" : s.health.state === "not-collected" ? "Collection not yet completed" : s.health.state === "degraded" ? "Partial data available" : s.health.state === "empty" ? "Scan completed with no eligible movers" : stale || s.health.state === "stale" ? "Data stale" : "Latest scan received"} · Snapshot ${time(s.generated_at)} London · Last successful collection ${time(s.last_success_at)} · ${s.market.status || "Session status unavailable"}${s.health.last_error ? " · " + s.health.last_error : ""}`;
+  el.textContent = `${replayContext ? "REPLAY · Simulated clock " + time(replayContext.at) + " London · " : archived ? "ARCHIVED SNAPSHOT · Automatic refresh paused · " : ""}${researchProvenance(snapshot, replayContext ? replayContext.scenario.source_kind === "synthetic" : demo).statusPrefix}${failed ? "Scan failed" : s.health.state === "not-collected" ? "Collection not yet completed" : s.health.state === "degraded" ? "Partial data available" : s.health.state === "empty" ? "Scan completed with no eligible movers" : stale || s.health.state === "stale" ? "Data stale" : "Latest scan received"} · Snapshot ${time(s.generated_at)} London · Last successful collection ${time(s.last_success_at)} · ${s.market.status || "Session status unavailable"}${s.health.last_error ? " · " + s.health.last_error : ""}`;
   $("session-label").textContent =
     `${s.market.session || "SESSION UNAVAILABLE"} · LONDON MARKET`;
 }
@@ -273,8 +292,7 @@ function svgEl(tag, attrs = {}) {
   for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
   return e;
 }
-function chart(rows, share, setups) {
-  const area = $("chart");
+function chart(rows, share, setups, area = $("chart")) {
   if (!rows.length) {
     empty(area, "No completed candles available for this share.");
     return;
@@ -701,7 +719,7 @@ function renderHistory() {
     : "No snapshot received.";
 }
 async function refresh() {
-  if (archived) return;
+  if (archived || replayContext) return;
   const button = $("refresh");
   button.disabled = true;
   try {
@@ -716,6 +734,7 @@ async function refresh() {
           : `Dashboard request failed (${res.status}).`,
       );
     const body = await res.json();
+    if (replayContext) return;
     snapshot = body.snapshot;
     revision = body.revision;
     renderAll();
@@ -729,7 +748,10 @@ async function refresh() {
 }
 
 function renderAll() {
-  const provenance = researchProvenance(snapshot, demo);
+  const provenance = researchProvenance(
+    snapshot,
+    replayContext ? replayContext.scenario.source_kind === "synthetic" : demo,
+  );
   $("demo-banner").hidden = !provenance.synthetic;
   $("demo-banner").textContent = provenance.banner;
   freshness();
@@ -737,6 +759,16 @@ function renderAll() {
   renderDetail();
   renderPortfolio();
   renderHistory();
+  renderInsights();
+  renderReplayFrame();
+  $("replay-banner").hidden = !replayContext;
+  $("replay-banner-text").textContent = replayContext
+    ? replayProvenance(replayContext.scenario) +
+      " Simulated clock: " +
+      time(replayContext.at) +
+      " London."
+    : "";
+  $("archive-panel").hidden = Boolean(replayContext);
   const coverage =
     snapshot?.coverage ||
     snapshot?.health?.coverage ||
@@ -756,12 +788,14 @@ function renderAll() {
   });
 }
 async function openArchive(id) {
+  if (replayContext) return;
   try {
     const res = await fetch("/api/history?revision=" + encodeURIComponent(id), {
       cache: "no-store",
     });
     if (!res.ok) throw new Error("Saved snapshot could not be loaded.");
     const body = await res.json();
+    if (replayContext) return;
     snapshot = body.snapshot;
     revision = body.revision;
     archived = true;
@@ -772,6 +806,7 @@ async function openArchive(id) {
   }
 }
 async function loadArchives(append = false) {
+  if (replayContext) return;
   if (demo) {
     empty(
       $("archives"),
@@ -814,6 +849,429 @@ async function loadArchives(append = false) {
     empty($("archives"), e.message);
   }
 }
+
+function contextLabel() {
+  return replayContext
+    ? `REPLAY ${replayContext.scenario.source_kind} · ${replayContext.scenario.title} · simulated clock ${time(replayContext.at)} London`
+    : archived
+      ? `ARCHIVED paper research · ${time(snapshot?.generated_at)} London`
+      : researchProvenance(snapshot, demo).synthetic
+        ? "SYNTHETIC DEMONSTRATION · not observed market performance"
+        : "Paper research · no live orders";
+}
+function journalEntries() {
+  const cutoff = Date.parse(replayContext?.at || snapshot?.generated_at);
+  return (snapshot?.decision_journal?.entries || []).filter(
+    (entry) =>
+      Number.isFinite(Date.parse(entry.at)) && Date.parse(entry.at) <= cutoff,
+  );
+}
+function filteredJournal() {
+  const query = $("journal-search").value.toLowerCase(),
+    kind = $("journal-kind").value;
+  return journalEntries().filter(
+    (r) =>
+      (kind === "all" || r.kind === kind) &&
+      `${r.ticker || ""} ${r.title || ""} ${r.explanation || ""} ${r.status || ""}`
+        .toLowerCase()
+        .includes(query),
+  );
+}
+function explanationCard(entry) {
+  const card = text("article", "", "decision-card"),
+    top = text("div", "", "decision-heading");
+  top.append(
+    text("span", time(entry.at) + " London", "decision-time"),
+    badge(entry.status || entry.kind || "Recorded"),
+  );
+  card.append(
+    top,
+    text(
+      "h3",
+      `${entry.ticker ? entry.ticker + " · " : ""}${entry.title || "Research observation"}`,
+    ),
+    text("p", entry.explanation || "No explanation was supplied."),
+  );
+  const fields = [];
+  if (entry.source) fields.push("Source: " + entry.source);
+  if (entry.signal_candle_closed_at)
+    fields.push(
+      "Signal candle closed: " +
+        time(entry.signal_candle_closed_at) +
+        " London",
+    );
+  if (entry.eligible_interval_start)
+    fields.push(
+      "Earliest candidate interval starts: " +
+        time(entry.eligible_interval_start) +
+        " London",
+    );
+  if (entry.execution_at)
+    fields.push("Modelled execution: " + time(entry.execution_at) + " London");
+  card.append(text("p", fields.join(" · "), "muted"));
+  return card;
+}
+function selectedReport() {
+  const report = snapshot?.daily_report;
+  if (!report) return null;
+  const at = Date.parse(report.as_of),
+    cutoff = Date.parse(replayContext?.at || snapshot?.generated_at);
+  return Number.isFinite(at) && at <= cutoff ? report : null;
+}
+function humanFacts(container, record, labels) {
+  const list = text("dl", "", "human-facts");
+  for (const [key, label] of Object.entries(labels)) {
+    const value = record?.[key];
+    if (value === undefined || value === null) continue;
+    const pair = document.createElement("div");
+    pair.append(
+      text("dt", label),
+      text(
+        "dd",
+        typeof value === "boolean"
+          ? value
+            ? "Yes"
+            : "No"
+          : typeof value === "object"
+            ? Object.entries(value)
+                .map(
+                  ([k, v]) =>
+                    k.replaceAll("_", " ") +
+                    ": " +
+                    (typeof v === "boolean"
+                      ? v
+                        ? "Yes"
+                        : "No"
+                      : typeof v === "object"
+                        ? "See complete report records"
+                        : v),
+                )
+                .join(" · ")
+            : value,
+      ),
+    );
+    list.append(pair);
+  }
+  if (!list.children.length)
+    empty(container, "No observations supplied for this snapshot.");
+  else container.replaceChildren(list);
+}
+function renderInsights() {
+  const journal = snapshot?.decision_journal,
+    entries = journalEntries(),
+    selected = $("journal-kind").value,
+    kinds = [
+      ...new Set(
+        entries.map((e) => e.kind).filter((k) => typeof k === "string"),
+      ),
+    ].sort();
+  $("journal-kind").replaceChildren(
+    ...["all", ...kinds].map((kind) => {
+      const option = text(
+        "option",
+        kind === "all" ? "All decision types" : kind.replaceAll("-", " "),
+      );
+      option.value = kind;
+      return option;
+    }),
+  );
+  $("journal-kind").value = kinds.includes(selected) ? selected : "all";
+  const shown = filteredJournal();
+  if (shown.length)
+    $("journal-entries").replaceChildren(...shown.map(explanationCard));
+  else
+    empty(
+      $("journal-entries"),
+      journal
+        ? "No decisions match these filters at this observation time."
+        : "No decision journal is available for the selected snapshot.",
+    );
+  $("journal-context").textContent =
+    contextLabel() +
+    (journal
+      ? " · Observations through " + time(journal.as_of) + " London."
+      : "");
+  $("journal-coverage").textContent = journal
+    ? `${shown.length} shown of ${entries.length} available entries${typeof journal.total_entries === "number" ? " (" + journal.total_entries + " in the source journal)" : ""}. ${journal.truncated ? "This snapshot is bounded; complete records remain in the collector journal." : ""} ${journal.historical_reconstruction ? "Historical reconstruction; read the record limitations." : ""}`
+    : "";
+  $("journal-records").textContent = JSON.stringify(journal || {}, null, 2);
+  $("journal-download").disabled = !entries.length;
+  const report = selectedReport();
+  $("report-download").disabled = !report;
+  $("report-headline").textContent =
+    report?.headline || "Daily paper-research report";
+  $("report-context").textContent =
+    contextLabel() +
+    (report
+      ? ` · ${report.status || "Status unavailable"} · as of ${time(report.as_of)} London.`
+      : " · No report is available at this selected observation time.");
+  if (report?.summary?.length)
+    $("report-summary").replaceChildren(
+      ...report.summary.map((value) => text("p", value)),
+    );
+  else
+    empty(
+      $("report-summary"),
+      "A report will appear when the collector supplies session evidence.",
+    );
+  const m = report?.metrics;
+  $("report-metrics").replaceChildren(
+    metric(
+      "Entries today",
+      m?.entries_today ?? "Unavailable",
+      "Modelled entry date",
+    ),
+    metric(
+      "Trades closed",
+      m?.closed_today ?? "Unavailable",
+      "Exit observed in this session",
+    ),
+    metric(
+      "Closed trade net P/L",
+      money(m?.net_closed_pnl_gbp),
+      "After the modelled costs",
+    ),
+    metric(
+      "Estimated equity",
+      money(m?.equity_estimate_gbp),
+      m?.equity_stale
+        ? "Warning: equity uses stale prices"
+        : "Includes open paper positions",
+    ),
+  );
+  humanFacts(
+    $("report-costs"),
+    {
+      price: money(m?.gross_fill_pnl_gbp),
+      commission: money(m?.dealing_commission_gbp),
+      tax: money(m?.stamp_duty_gbp),
+      net: money(m?.net_closed_pnl_gbp),
+      reconciled: m?.cost_bridge_reconciled,
+    },
+    {
+      price: "Price profit/loss after spread and slippage",
+      commission: "Less dealing commission",
+      tax: "Less purchase tax",
+      net: "Net full-trade profit/loss",
+      reconciled: "Cost bridge reconciled",
+    },
+  );
+  humanFacts($("report-watch"), report?.watch, {
+    total: "Tracked shares",
+    movers: "Previous-session movers",
+    risers: "Previous risers",
+    fallers: "Previous fallers",
+    reversal: "Reversal evidence",
+    continuation: "Continuation evidence",
+    undecided: "Undecided",
+    unavailable: "Unavailable",
+    stale: "Stale shares",
+  });
+  if (typeof report?.watch?.universe_basis === "string")
+    $("report-watch").append(text("p", report.watch.universe_basis, "muted"));
+  const quality = text("div", "", "report-quality");
+  const decisions = document.createElement("div");
+  humanFacts(decisions, report?.decisions, {
+    total: "Setup decisions",
+    pending: "Pending",
+    open: "Open",
+    closed: "Closed",
+    skipped: "Skipped",
+    missing: "Missing",
+    missed: "Missed",
+    reconciled: "Counts reconciled",
+  });
+  quality.append(decisions);
+  if (report?.data_quality) {
+    const note = text("div", "", "quality-note"),
+      data = report.data_quality,
+      delay = data.first_observation_delay_minutes || {};
+    note.append(text("h3", "Collection quality", "quality-heading"));
+    const facts = document.createElement("div");
+    humanFacts(
+      facts,
+      {
+        candles: data.observed_intraday_candles,
+        samples: delay.sample_count,
+        median:
+          typeof delay.median === "number"
+            ? number(delay.median) + " min"
+            : "Unavailable",
+        maximum:
+          typeof delay.maximum === "number"
+            ? number(delay.maximum) + " min"
+            : "Unavailable",
+        missing: data.missing_watch_instruments,
+        stale: data.stale_watch_instruments ?? report.watch?.stale,
+        failed: data.failed_or_degraded_runs,
+        gaps: data.new_gap_warnings_today ?? data.unresolved_coverage_events,
+        unresolved: data.open_positions_with_unresolved_coverage,
+        verified: data.coverage_verified,
+      },
+      {
+        candles: "Observed intraday candles",
+        samples: "Observation-delay samples",
+        median: "Median observed delay",
+        maximum: "Longest observed delay",
+        missing: "Missing watch instruments",
+        stale: "Stale watch instruments",
+        failed: "Failed or degraded collections",
+        gaps: "New gap warnings today",
+        unresolved: "Open positions with unresolved coverage",
+        verified: "Complete coverage verified",
+      },
+    );
+    note.append(
+      facts,
+      text(
+        "p",
+        typeof delay.basis === "string"
+          ? delay.basis
+          : "Observation timing measures the stored fetch after a candle ended. Archive backfills can increase this delay; it does not establish provider latency.",
+        "muted",
+      ),
+    );
+    if (typeof data.coverage_note === "string")
+      note.append(text("p", data.coverage_note, "muted"));
+    if (typeof data.coverage_event_basis === "string")
+      note.append(text("p", data.coverage_event_basis, "muted"));
+    quality.append(note);
+  }
+  $("report-quality").replaceChildren(quality);
+  $("report-limitations").replaceChildren(
+    ...(
+      report?.limitations || [
+        "No report limitations supplied because no report is available.",
+      ]
+    ).map((value) => text("li", value)),
+  );
+  $("report-records").textContent = JSON.stringify(report || {}, null, 2);
+}
+function renderReplayFrame() {
+  $("replay-frame-content").hidden = !replayContext;
+  if (!replayContext) return;
+  const s = snapshot,
+    watch = s?.watchlist || [];
+  if (!watch.some((r) => r.ticker === chosen)) chosen = watch[0]?.ticker || "";
+  $("replay-share").replaceChildren(
+    ...watch.map((r) => {
+      const o = text("option", r.ticker + (r.company ? " · " + r.company : ""));
+      o.value = r.ticker;
+      return o;
+    }),
+  );
+  $("replay-share").value = chosen;
+  const share = watch.find((r) => r.ticker === chosen) || {},
+    candles = Array.isArray(s?.candles?.[chosen]) ? s.candles[chosen] : [],
+    setups = (s?.candidates || []).filter((r) => r.ticker === chosen);
+  chart(candles, share, setups, $("replay-chart"));
+  $("replay-observation").textContent =
+    `Simulated clock ${time(replayContext.at)} London. Selected share’s last candle ${time(share.last_candle_at)}; available to the collector ${time(share.available_at)}.`;
+  $("replay-share-reason").textContent =
+    share.reason || "No share explanation was available in this frame.";
+  $("replay-facts").replaceChildren(
+    metric(
+      "Replay clock",
+      new Date(replayContext.at).toLocaleTimeString("en-GB", {
+        timeZone: "Europe/London",
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+      `Frame ${replayContext.index + 1} of ${replayContext.total}`,
+    ),
+    metric("Known setups", s.candidates.length, "Only this frozen snapshot"),
+    metric(
+      "Open paper positions",
+      s.paper.positions.length,
+      "Simulation, no broker orders",
+    ),
+    metric(
+      "Selected evidence",
+      share.status || "Unavailable",
+      chosen || "No share available",
+    ),
+  );
+  if (setups.length)
+    $("replay-setups").replaceChildren(
+      ...setups.map((r) => {
+        const card = text("div", "", "setup");
+        card.append(
+          text(
+            "strong",
+            `${r.ticker} · ${r.direction || ""} · ${r.status || "Recorded"}`,
+          ),
+          text("p", r.reason || "No setup explanation supplied."),
+          text(
+            "p",
+            `Known at ${time(r.available_at)} London · entry ${number(r.entry)} · stop ${number(r.stop)} · target ${number(r.target)}`,
+            "muted",
+          ),
+        );
+        return card;
+      }),
+    );
+  else
+    empty(
+      $("replay-setups"),
+      "No setup for this share had been recorded at this moment.",
+    );
+  const recent = journalEntries().slice(-4);
+  if (recent.length)
+    $("replay-decisions").replaceChildren(...recent.map(explanationCard));
+  else
+    empty(
+      $("replay-decisions"),
+      "No decision explanations were available at this moment.",
+    );
+}
+const replayController = mountReplay({
+  formatTime: time,
+  applyFrame(frame, scenario, position) {
+    if (!replayContext) beforeReplay = { snapshot, revision, archived, chosen };
+    replayContext = { at: frame.at, scenario, ...position };
+    snapshot = frame.snapshot;
+    revision = null;
+    archived = false;
+    renderAll();
+  },
+  exitReplay() {
+    const restore = beforeReplay;
+    replayContext = null;
+    beforeReplay = null;
+    if (restore) {
+      snapshot = restore.snapshot;
+      revision = restore.revision;
+      archived = restore.archived;
+      chosen = restore.chosen;
+    }
+    renderAll();
+    if (!archived) refresh();
+  },
+});
+$("journal-search").addEventListener("input", renderInsights);
+$("journal-kind").addEventListener("change", renderInsights);
+$("journal-download").addEventListener("click", () => {
+  const rows = filteredJournal().map((r) => ({
+    research_context: contextLabel(),
+    ...r,
+  }));
+  downloadText(
+    recordsCSV(rows),
+    (replayContext ? "REPLAY-" : "") + "decision-journal.csv",
+    "text/csv; charset=utf-8",
+  );
+});
+$("report-download").addEventListener("click", () =>
+  downloadText(
+    reportText(selectedReport(), contextLabel()),
+    (replayContext ? "REPLAY-" : "") + "daily-paper-report.txt",
+  ),
+);
+$("replay-share").addEventListener("change", (e) => {
+  chosen = e.target.value;
+  renderAll();
+});
+
 $("legacy-source").addEventListener("change", renderLegacy);
 $("legacy-search").addEventListener("input", renderLegacy);
 $("load-archives").addEventListener("click", () => loadArchives());
@@ -826,10 +1284,13 @@ $("return-latest").addEventListener("click", () => {
 $("demo-banner").hidden = !demo;
 document.querySelectorAll(".exports a,.button-link").forEach((a) =>
   a.addEventListener("click", (e) => {
-    if (demo) {
+    if (demo || replayContext) {
       e.preventDefault();
       const tableName = new URL(a.href).searchParams.get("table"),
-        rows = snapshot?.[tableName] || snapshot?.paper?.[tableName] || [],
+        rows =
+          tableName === "legacy"
+            ? snapshot?.legacy?.records || []
+            : snapshot?.[tableName] || snapshot?.paper?.[tableName] || [],
         keys = [...new Set(rows.flatMap(Object.keys))],
         cell = (v) => {
           const raw = String(
@@ -850,7 +1311,8 @@ document.querySelectorAll(".exports a,.button-link").forEach((a) =>
         url = URL.createObjectURL(new Blob([csv], { type: "text/csv" })),
         link = document.createElement("a");
       link.href = url;
-      link.download = "DEMO-" + tableName + ".csv";
+      link.download =
+        (replayContext ? "REPLAY-" : "DEMO-") + tableName + ".csv";
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
@@ -870,5 +1332,6 @@ renderWatch();
 renderDetail();
 renderPortfolio();
 renderHistory();
+renderInsights();
 refresh();
 setInterval(refresh, 60000);

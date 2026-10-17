@@ -14,7 +14,7 @@ node --test tests/*.test.mjs
 node scripts/build.mjs
 ```
 
-The initial view is explicitly empty. To inspect fictional example data, use `node server.mjs --demo` and open `http://127.0.0.1:8787/?demo=1`. The demonstration endpoint is absent unless explicitly enabled, and demo data is never embedded in the hosted Worker. The banner remains visible in every demo view. API snapshots and archived snapshots marked `mode: synthetic-demo` also show that banner without any URL flag; their CSV downloads carry a DEMONSTRATION filename. This fixture is a UI example, not a model result.
+The initial view is explicitly empty. To inspect fictional example data, use `node server.mjs --demo` and open `http://127.0.0.1:8787/?demo=1`. The demonstration endpoint is absent unless explicitly enabled, and the interface demo is never embedded in the hosted Worker. Explicitly labelled fictional replay examples are embedded behind the same private-reader boundary as the dashboard. The banner remains visible in every demo view. API snapshots and archived snapshots marked `mode: synthetic-demo` also show that banner without any URL flag; their CSV downloads carry a DEMONSTRATION filename. This fixture is a UI example, not a model result.
 
 For an end-to-end local ingest, set `INGEST_TOKEN` in the terminal environment before starting the server. POST a valid scanner snapshot to `/api/ingest` with `Authorization: Bearer <token>` and `Content-Type: application/json`. No default token exists. The local server binds only to loopback, rejects non-loopback hosts and cross-origin browser writes, and writes ignored `.local-data/` files. It is a single-process development server, not an internet-facing hosting service. Paper records live in the collector; the dashboard retains immutable complete snapshot revisions.
 
@@ -49,3 +49,9 @@ Optional `legacy.records` preserves imported historical CSV fields in an explici
 ## Review and operational limits
 
 The graph uses completed candles with explicit units, prior-close/open markers when supplied and entry/stop/target lines for the selected setup. Exact candle and complete snapshot records remain inspectable. No data is discarded by the visual shortlist. Operational histories can grow; the upstream collector must bound each snapshot within 2 MiB while retaining complete durable evidence outside the display payload. D1 revision retention, backup/export cadence, long-term storage capacity and deletion policy must be agreed before an extended hosted run. No hosted integration, two-account access, data-provider latency or unattended schedule is claimed verified by the local tests.
+
+## Replay and explanatory records
+
+The replay uses frozen outputs of the actual Python engine, with fictional authored setups clearly distinguished from recorded observations and production signal discovery. Playback is isolated from current snapshots and never writes an operational journal. Decision journal CSV and daily report text follow the selected current, archived or replay snapshot. Replay snapshots cannot pass the ingest boundary. See [the replay and report guide](../docs/REPLAY_AND_REPORTS.md) for controls, recorded file generation and review acceptance.
+
+`GET /api/export?table=journal` exports bounded explanatory entries. `GET /api/report` downloads the selected stored snapshot's canonical plain-text report; `?format=json` returns its structure and revision. Both support the existing `revision` parameter and private reader checks. Reports are absent, rather than fabricated, for old snapshots without the new fields.

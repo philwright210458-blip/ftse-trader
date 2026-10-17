@@ -1,12 +1,35 @@
-import { readFile, writeFile, mkdir, cp } from "node:fs/promises";
+import { readFile, writeFile, mkdir, cp, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."),
   assets = {};
+const modules = (await readdir(path.join(root, "public")))
+  .filter((file) => /^[a-z][a-z0-9-]*\.mjs$/.test(file))
+  .sort();
+const replay = JSON.parse(
+  await readFile(path.join(root, "public", "replay.json"), "utf8"),
+);
+if (
+  replay.kind !== "paper-replay" ||
+  !Array.isArray(replay.scenarios) ||
+  !replay.scenarios.length ||
+  replay.scenarios.some(
+    (s) =>
+      s.source_kind !== "synthetic" ||
+      !Array.isArray(s.frames) ||
+      !s.frames.length ||
+      s.frames.some((f) => f.snapshot?.mode !== "synthetic-demo"),
+  )
+) {
+  throw new Error(
+    "Only labelled fictional replay scenarios may be embedded in the dashboard build.",
+  );
+}
 for (const [file, type] of [
   ["index.html", "text/html"],
   ["app.js", "application/javascript"],
-  ["presentation.mjs", "application/javascript"],
+  ...modules.map((file) => [file, "application/javascript"]),
+  ["replay.json", "application/json"],
   ["style.css", "text/css"],
 ])
   assets["/" + file] = {

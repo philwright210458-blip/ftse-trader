@@ -822,6 +822,9 @@ class ResearchEngine:
                 "£100 position size is simulated share notional; entry commission and purchase duty require additional available cash.",
             ],
         }
+        from .insights import build_insights
+
+        result.update(build_insights(self, result, at))
         # Enforce a firm transfer budget even with unusually long company names,
         # notes or strategy explanations. The complete journal is never trimmed.
         budget = 1_500_000
@@ -836,6 +839,9 @@ class ResearchEngine:
                 result["evaluation"]["baselines"].pop()
             elif result["paper"]["closed_trades"]:
                 result["paper"]["closed_trades"].pop()
+            elif result["decision_journal"]["entries"]:
+                result["decision_journal"]["entries"].pop()
+                result["decision_journal"]["truncated"] = True
             else:
                 raise ValueError("Universe metadata alone exceeds the dashboard transfer budget")
             result["coverage"]["size_budget_applied"] = True

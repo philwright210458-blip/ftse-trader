@@ -16,7 +16,7 @@ python ftse_research_cli.py demo --database runtime/demo.sqlite --out runtime/de
 node dashboard/server.mjs --demo
 ```
 
-Open `http://127.0.0.1:8787/?demo=1` for the labelled interface example. The generated Python demo is a separate deterministic, fictional research ledger; it can be sent through the actual authenticated update API as described in [Operations](docs/OPERATIONS.md). Opening the ordinary `/` URL shows no data until an update is received. Demo data is not included in the hosted Worker.
+Open `http://127.0.0.1:8787/?demo=1` for the labelled interface example. The generated Python demo is a separate deterministic, fictional research ledger; it can be sent through the actual authenticated update API as described in [Operations](docs/OPERATIONS.md). Opening the ordinary `/` URL shows no data until an update is received. The local interface fixture is not included in the hosted Worker. Labelled fictional replay scenarios are included behind its normal private-reader checks.
 
 The demo is for reviewing behaviour and presentation. Its results are not observed share performance. Synthetic and market-paper journals cannot be mixed.
 
@@ -28,6 +28,7 @@ The demo is for reviewing behaviour and presentation. Its results are not observ
 - Durable SQLite evidence, authenticated hosted snapshot storage, archived snapshots and CSV exports.
 - A simpler outcome workbook: a pound profit/loss summary, separate strategy comparison and grouped breakdowns.
 - Session-aware scheduling for London holidays, daylight saving and early closes, with duplicate and missed-run protection.
+- Actual-engine session replays with stepping, playback and local recorded-file support, plus an explanatory decision journal and daily report.
 
 The user-selected defaults are **£100 notional per simulated position**, a **5% initial configurable movers filter**, and monitoring for the **whole trading session**. The sample £1,000 virtual account, three-position limit and evaluation thresholds are proposed paper-research assumptions. They are editable in `config/research.json`; they are not live-money recommendations. Synthetic shorts are disabled by default because borrow availability and charges have not been established.
 
@@ -62,3 +63,5 @@ The implementation provides the collection, scheduling, dashboard and paper-eval
 Read [Implementation status](docs/IMPLEMENTATION_STATUS.md), [Operations](docs/OPERATIONS.md), [Data and simulation rules](docs/RESEARCH_MODEL.md) and the [original scanner guide](docs/LEGACY_SCANNER.md). The approved future direction is paper research first, with any decision about a separate live execution service deferred. ChatGPT Sites is considered for the research interface; no financial transaction capability is added to it.
 
 A ready-to-inspect [synthetic workbook example](docs/examples/ftse_outcomes_synthetic.xlsx) is included in the pull request. It illustrates the layout and mixed result states without presenting old cached numbers as corrected market performance.
+
+Open `http://127.0.0.1:8787/?demo=1#replay` to try the new replay. The [replay and report guide](docs/REPLAY_AND_REPORTS.md) explains the fictional scenarios, recorded observations, downloads and review checks.

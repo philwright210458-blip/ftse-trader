@@ -68,6 +68,8 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def push_snapshot(snapshot: dict, site_url: str | None = None, token: str | None = None) -> dict:
+    if snapshot.get("replay") is not None:
+        raise ValueError("Replay frames cannot be published as current research snapshots")
     site_url = site_url or os.environ.get("FTSE_SITE_URL", "")
     token = token or os.environ.get("FTSE_INGEST_TOKEN", "")
     parsed = urllib.parse.urlsplit(site_url)
@@ -386,6 +388,7 @@ def main(argv=None):
         choices=[
             "init",
             "demo",
+            "replay",
             "collect",
             "run",
             "snapshot",
@@ -402,6 +405,7 @@ def main(argv=None):
     parser.add_argument("--config", default=str(ROOT / "config/research.json"))
     parser.add_argument("--database")
     parser.add_argument("--out")
+    parser.add_argument("--input", help="Replay: explicit recorded observation JSON; omitted for fictional scenarios")
     parser.add_argument("--table", default="trades", help="Journal table for complete CSV export")
     parser.add_argument("--snapshot-file", help="Push a previously generated snapshot without modifying its journal")
     parser.add_argument("--legacy-dir", default=str(ROOT / "scan_data"), help="Original CSV archive directory")
@@ -411,9 +415,57 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         config = load_config(args.config)
+        if args.input and args.command != "replay":
+            raise ValueError("--input is restricted to replay generation")
         if args.at and args.command not in ("plan", "demo"):
             raise ValueError("--at is restricted to schedule planning and synthetic demos")
-        if args.command == "plan":
+        if args.command == "replay":
+            from ftse_research.replay import build_bundle, build_demo_replay, replay_recorded
+
+            if args.database or args.push or args.snapshot_file or args.at:
+                raise ValueError("Replay uses its own temporary ledger and cannot publish or backdate a live journal")
+            if not args.out:
+                raise ValueError("Replay requires --out for a separate bundle file")
+            output = Path(args.out).resolve()
+            if output.suffix.lower() != ".json":
+                raise ValueError("Replay output must be a separate .json bundle")
+            protected = {
+                Path(config["database"]).resolve(),
+                Path(config["snapshot"]).resolve(),
+                Path(args.config).resolve(),
+            }
+            if output in protected:
+                raise ValueError("Replay output must be separate from the research database and current snapshot")
+            if args.input:
+                source = Path(args.input)
+                if source.resolve() == output:
+                    raise ValueError("Replay output cannot overwrite its observation source")
+                if source.stat().st_size > 64 * 1024 * 1024:
+                    raise ValueError("Recorded observation input exceeds 64 MiB")
+                observation = json.loads(source.read_text(encoding="utf-8"))
+                if not isinstance(observation, dict) or not {"candles", "universe", "session"} <= observation.keys():
+                    raise ValueError("Recorded replay requires session, universe and candles")
+                scenario = replay_recorded(
+                    observation["candles"],
+                    observation["universe"],
+                    observation["session"],
+                    clocks=observation.get("clocks"),
+                    title=observation.get("title", "Recorded observation replay"),
+                )
+                bundle = build_bundle([scenario])
+            else:
+                bundle = build_demo_replay()
+            if len(json.dumps(bundle, allow_nan=False, indent=2).encode()) > 12 * 1024 * 1024:
+                raise ValueError("Replay bundle exceeds the 12 MiB browser budget")
+            write_json(output, bundle)
+            result = {
+                "state": "replay-generated",
+                "path": str(output),
+                "scenarios": len(bundle["scenarios"]),
+                "frames": sum(len(s["frames"]) for s in bundle["scenarios"]),
+                "publication": "none; isolated replay only",
+            }
+        elif args.command == "plan":
             now = dt.datetime.fromisoformat(args.at) if args.at else aware()
             result = {
                 "enabled": config["enabled"],

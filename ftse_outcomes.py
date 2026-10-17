@@ -25,7 +25,7 @@ Assumptions (also written into the workbook's Summary sheet)
   * Legacy outcomes.csv is preserved; corrected results use outcomes.v2.csv.
   * If the stop and target both fall inside one candle, the stop is assumed
     to have been hit first (pessimistic).
-  * Gaps through a stop fill at the open, so a loss can exceed 1R.
+  * Gaps through a stop fill at the open, so a loss can exceed the planned stop amount.
   * Setups that have already gapped past their stop or target at the fill are
     skipped, not counted as trades.
   * Trading costs are applied when the report is built, so you can change them
@@ -309,6 +309,11 @@ def add_costs(frame: pd.DataFrame, cost_pct: float, stamp_pct: float) -> pd.Data
     return frame
 
 
+def pounds(frame: pd.DataFrame, column: str, position_gbp: float) -> pd.Series:
+    """Convert a per-trade result held in risk units into pounds for a position of `position_gbp`."""
+    return frame[column] * position_gbp * frame["fill_risk_pct"] / 100
+
+
 def drawdown(values: list[float]) -> float:
     peak, worst, total = 0.0, 0.0, 0.0
     for value in values:
@@ -481,14 +486,14 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
     # ---------------- Strategy comparison ----------------
     comparison = wb.create_sheet("Strategy Comparison", 1)
     put(comparison, 1, ["Alternative research strategies and holding periods"], bold=True)
-    note_row(comparison, 2, "Each holding-period section is a separate alternative, not an additional portfolio. Net R includes dealing costs and stamp duty on longs. "
+    note_row(comparison, 2, f"Each holding-period section is a separate alternative, not an additional portfolio. Figures are pounds per £{args.position_gbp:.0f} trade after dealing costs and stamp duty on longs. "
                             "Picks and pool use identical costs. Missing or pending results do not count as zero returns.", last_col=10, chars_per_line=140)
     note_row(comparison, 3, "Persistent: the same share and direction appeared in at least two scans available by the exact decision run. Empty decision runs select nothing. "
                             "Pool: each share/direction's first observation per day, a descriptive baseline rather than a matched-time causal ranking test.", last_col=10, chars_per_line=140)
     row = 5
     for horizon in horizons:
         put(comparison, row, [f"Hold up to {horizon} exchange session(s): core comparison"], bold=True)
-        header(comparison, row+1, ["Scenario", "Selected", "Completed", "Pending", "Missing data", "Skipped", "Avg net R (all fees)", "Pool avg R", "Delta vs pool R", "Result status"])
+        header(comparison, row+1, ["Scenario", "Selected", "Completed", "Pending", "Missing data", "Skipped", "Avg net per trade (£)", "Pool avg per trade (£)", "Difference vs pool (£)", "Result status"])
         comparison.row_dimensions[row+1].height = 36
         row += 2
         section = []
@@ -499,37 +504,38 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
             flow = cash_flows(trades)
             positive = int((flow["net_gbp"] > 1e-9).sum())
             negative = int((flow["net_gbp"] < -1e-9).sum())
-            avg = float(trades["r_net_stamp"].mean()) if len(trades) else None
-            baseline = float(other["r_net_stamp"].mean()) if len(other) else None
+            avg = float(pounds(trades, "r_net_stamp", args.position_gbp).mean()) if len(trades) else None
+            baseline = float(pounds(other, "r_net_stamp", args.position_gbp).mean()) if len(other) else None
             events = trades["outcome"] if len(trades) else pd.Series(dtype=str)
             state = "Recorded completed results" if len(trades) else "Awaiting results" if len(frame) else "Not available: no ideas"
             unavailable = "Awaiting results" if len(frame) else "Not available"
             put(comparison, row, [name, len(frame), totals["done"], totals["pending"], totals["nodata"], totals["skipped"],
-                round(avg, 4) if avg is not None else unavailable,
-                round(baseline, 4) if baseline is not None else "Not available",
-                round(avg-baseline, 4) if avg is not None and baseline is not None else "Not available", state])
+                round(avg, 2) if avg is not None else unavailable,
+                round(baseline, 2) if baseline is not None else "Not available",
+                round(avg-baseline, 2) if avg is not None and baseline is not None else "Not available", state])
             section.append((name,trades,flow,positive,negative,events,state,unavailable))
             row += 1
         row += 1
         put(comparison, row, [f"Hold up to {horizon} session(s): supporting price events and realised cash"], bold=True)
-        header(comparison, row+1, ["Scenario", "Completed", "Target", "Stop", "Timeout", "Profitable", "Losing", "Flat", "Net realised (£)", "Realised drawdown R"])
+        header(comparison, row+1, ["Scenario", "Completed", "Target", "Stop", "Timeout", "Profitable", "Losing", "Flat", "Net realised (£)", "Worst fall from peak (£)"])
         comparison.row_dimensions[row+1].height = 36
         row += 2
         for name,trades,flow,positive,negative,events,state,unavailable in section:
             put(comparison,row,[name,len(trades),int((events=="target").sum()),int((events=="stop").sum()),int((events=="timeout").sum()),
                 positive,negative,len(trades)-positive-negative,round(float(flow["net_gbp"].sum()),2) if len(trades) else unavailable,
-                round(drawdown(trades["r_net_stamp"].tolist()),4) if len(trades) else unavailable])
+                round(drawdown(flow["net_gbp"].tolist()),2) if len(trades) else unavailable])
             row += 1
         row += 2
     note_row(comparison, row, "There is no fixed break-even target-hit rate: fills, gaps, target payoffs, timeouts and fees vary. "
-                             "Drawdown uses realised results in exit order and excludes open-position valuation. Completed price events do not establish profitability.", last_col=10, chars_per_line=140)
+                             "Worst fall from peak uses realised results in exit order and excludes open-position valuation. Completed price events do not establish profitability.", last_col=10, chars_per_line=140)
     widths(comparison, [36, 11, 12, 12, 15, 12, 22, 19, 22, 31])
     comparison.freeze_panes = "B7"
 
     # ---------------- Breakdowns ----------------
     base = trades_for(pool, main_h) if not pool.empty else pd.DataFrame()
-    overall = float(base["r_net_stamp"].mean()) if not base.empty else None
-    note_row(breakdown, 1, f"Pool first observations, hold up to {main_h} exchange session(s). Net R includes dealing costs and stamp duty. "
+    overall = float(pounds(base, "r_net_stamp", args.position_gbp).mean()) if not base.empty else None
+    note_row(breakdown, 1, f"Pool first observations, hold up to {main_h} exchange session(s). Figures are pounds per £{args.position_gbp:.0f} trade "
+                            "after dealing costs and stamp duty. "
                             "Each section partitions the same completed pool; do not add sections together. Trades sharing market days may be correlated.", last_col=7, chars_per_line=125, bold=True)
     row = 4
     if not base.empty:
@@ -546,14 +552,14 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
                          f"{cfg100.rearm_move_pct*100:g}% (FTSE 100) or {cfg250.rearm_move_pct*100:g}% (FTSE 250) before a new test counts.", last_col=6, chars_per_line=120)
                 row += 2
             put(breakdown, row, [title], bold=True)
-            header(breakdown, row + 1, ["Group", "Completed", "Share of total", "Avg net R", "Delta vs overall R", "Sample: trades / market days"])
+            header(breakdown, row + 1, ["Group", "Completed", "Share of total", "Avg net per trade (£)", "Difference vs overall (£)", "Sample: trades / market days"])
             row += 2
-            put(breakdown, row, ["Overall pool baseline", len(base), 1., round(overall, 4), 0., f"{len(base)} trades / {base['day'].nunique()} market days"], fill=NEUTRAL)
+            put(breakdown, row, ["Overall pool baseline", len(base), 1., round(overall, 2), 0., f"{len(base)} trades / {base['day'].nunique()} market days"], fill=NEUTRAL)
             breakdown.cell(row, 3).number_format = "0.0%"
             row += 1
             for label, group in base.groupby(column, observed=True):
-                average = float(group["r_net_stamp"].mean())
-                put(breakdown, row, [str(label), len(group), len(group)/len(base), round(average, 4), round(average-overall, 4),
+                average = float(pounds(group, "r_net_stamp", args.position_gbp).mean())
+                put(breakdown, row, [str(label), len(group), len(group)/len(base), round(average, 2), round(average-overall, 2),
                                      f"{len(group)} trades / {group['day'].nunique()} market days"])
                 breakdown.cell(row, 3).number_format = "0.0%"
                 row += 1
@@ -608,28 +614,22 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
     mock.freeze_panes = "A3"
 
     # ---------------- Daily realised balance ----------------
-    header(daily, 1, ["Date"] + [f"{n} (cumulative R)" for n in PICK_SCENARIOS] + ["Top 2 per day (cumulative £)"])
+    header(daily, 1, ["Date"] + [f"{n} (cumulative £)" for n in PICK_SCENARIOS])
     daily.row_dimensions[1].height = 45
     curves = {}
     for name in PICK_SCENARIOS:
         trades = trades_for(picks[name], main_h) if not picks[name].empty else pd.DataFrame()
-        curves[name] = trades.groupby("realised_day")["r_net"].sum() if not trades.empty else pd.Series(dtype=float)
+        curves[name] = (cash_flows(trades)["net_gbp"].groupby(trades["realised_day"]).sum()
+                        if not trades.empty else pd.Series(dtype=float))
     all_days = sorted(set().union(*[set(c.index) for c in curves.values()])) if curves else []
     cumulative = {name: curves[name].reindex(all_days, fill_value=0.0).cumsum() for name in PICK_SCENARIOS}
-    top2_trades = trades_for(picks["Top 2 per day"], main_h) if not picks["Top 2 per day"].empty else pd.DataFrame()
-    if top2_trades.empty:
-        pounds_by_day = pd.Series(dtype=float)
-    else:
-        net_gbp = cash_flows(top2_trades)["net_gbp"]
-        pounds_by_day = net_gbp.groupby(top2_trades["realised_day"]).sum().reindex(all_days, fill_value=0.0).cumsum()
     for number, day in enumerate(all_days, 2):
-        put(daily, number, [day] + [round(float(cumulative[n][day]), 3) for n in PICK_SCENARIOS]
-            + [round(float(pounds_by_day.get(day, 0.0)), 2)])
-    widths(daily, [12, 22, 22, 26, 24])
+        put(daily, number, [day] + [round(float(cumulative[n][day]), 2) for n in PICK_SCENARIOS])
+    widths(daily, [12, 22, 22, 26])
     if len(all_days) >= 2:
         chart = LineChart()
-        chart.title = f"Realised paper balance, hold up to {main_h} day(s), R after costs"
-        chart.y_axis.title, chart.x_axis.title = "Cumulative R", "Date"
+        chart.title = f"Realised paper balance (£), hold up to {main_h} day(s), after all fees"
+        chart.y_axis.title, chart.x_axis.title = "Cumulative £", "Date"
         chart.add_data(Reference(daily, min_col=2, max_col=4, min_row=1, max_row=len(all_days) + 1), titles_from_data=True)
         chart.set_categories(Reference(daily, min_col=1, min_row=2, max_row=len(all_days) + 1))
         for series, colour in zip(chart.series, ("2F6DB5", "C0392B", "2E9E5B")):
@@ -641,12 +641,12 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
         chart.y_axis.delete = False
         chart.height, chart.width = 9, 22
         daily.add_chart(chart, "G2")
-    put(daily, len(all_days) + 4, [f"£ column: each trade is £{args.position_gbp:.0f} of shares, after dealing costs and stamp duty. Change with --position-gbp."])
+    put(daily, len(all_days) + 4, [f"Each trade is £{args.position_gbp:.0f} of shares, after dealing costs and stamp duty. Change with --position-gbp."])
 
     # ---------------- All outcomes ----------------
     heads = ["Date", "Scan (as of)", "Company", "Ticker", "Type", "Index", "Setup", "Direction", "Score", "Touches", "Stop", "Target"]
     for horizon in horizons:
-        heads += [f"Result, {horizon}d", f"R, {horizon}d (before costs)"]
+        heads += [f"Result, {horizon}d", f"Profit / loss per £{args.position_gbp:.0f}, {horizon}d (before costs, £)"]
     header(allout, 1, heads)
     allout.row_dimensions[1].height = 45
     by_h = {h: outcomes[outcomes["horizon"] == h].set_index("key") for h in horizons}
@@ -659,27 +659,27 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
             if r["key"] in rows_h.index:
                 o = rows_h.loc[r["key"]]
                 result = o["outcome"] if o["status"] == "done" else ("skipped" if o["status"] == "skipped" else "no data")
-                values += [result, o["r_gross"] if o["status"] == "done" else None]
+                values += [result, round(o["r_gross"] * args.position_gbp * o["fill_risk_pct"] / 100, 2) if o["status"] == "done" else None]
             else:
                 values += ["pending", None]
         put(allout, number, values)
     widths(allout, [11, 10, 30, 9, 9, 10, 9, 9, 7, 8, 9, 9] + [11, 12] * len(horizons))
     allout.freeze_panes = "A2"
     money_format = '"£"#,##0.00;[Red]-"£"#,##0.00;"£"0.00'
-    signed_r_format = '+0.000;[Red]-0.000;0.000'
     for row_idx, cols in ((6,[1]),(9,[1,2,3,4])):
         for col in cols:
             summary.cell(row_idx,col).number_format=money_format
+    for col in range(14, 14 + 2 * len(horizons), 2):
+        for row_idx in range(2, allout.max_row + 1):
+            if isinstance(allout.cell(row_idx, col).value, (float, int)):
+                allout.cell(row_idx, col).number_format = money_format
     for ws in (mock,daily):
         start_row=3 if ws is mock else 2
-        currency_cols=range(13,19) if ws is mock else [5]
+        currency_cols=range(13,19) if ws is mock else [2,3,4]
         for row_idx in range(start_row,ws.max_row+1):
             for col in currency_cols:
                 if isinstance(ws.cell(row_idx,col).value,(float,int)):
                     ws.cell(row_idx,col).number_format=money_format
-            if ws is daily:
-                for col in (2,3,4):
-                    ws.cell(row_idx,col).number_format=signed_r_format
     for ws in (comparison,breakdown):
         for row_idx in range(1,ws.max_row+1):
             for col in range(1,ws.max_column+1):
@@ -691,15 +691,14 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
                     label=str(ws.cell(block_header,col).value or "") if block_header else ""
                     if label in ("Completed","Target","Stop","Timeout"):
                         cell.number_format="0"
-                    elif label in ("Avg net R","Delta vs overall R"):
-                        cell.number_format=signed_r_format
+                    elif "(£)" in label:
+                        cell.number_format=money_format
                 elif ws is comparison:
                     # Locate the current block header above this data row.
                     previous=next((r for r in range(row_idx-1,0,-1) if ws.cell(r,1).value=="Scenario"),None)
                     if previous:
                         label=str(ws.cell(previous,col).value or "")
                         if "(£)" in label:cell.number_format=money_format
-                        elif " R" in label:cell.number_format=signed_r_format
     return wb
 
 
@@ -766,8 +765,9 @@ def main() -> None:
         if not merged.empty:
             merged = add_costs(merged, args.cost_pct, args.stamp_duty_pct)
             stats = summarise(merged)
-            print(f"\nMock trader (top 2 per day, hold up to {args.horizon}d): {stats['n']} trades, "
-                  f"{pct(stats['target'])} hit target, average {stats['net']:.2f}R after costs, total {stats['total_net']:.1f}R.")
+            net = pounds(merged, "r_net_stamp", args.position_gbp)
+            print(f"\nMock trader (top 2 per day, hold up to {args.horizon}d, £{args.position_gbp:.0f} per trade): {stats['n']} trades, "
+                  f"{pct(stats['target'])} hit target, average £{net.mean():.2f} per trade after all fees, total £{net.sum():.2f}.")
             if stats["n"] < 30:
                 print("That is far too few trades to conclude anything.")
     print(f"\nWorkbook updated: {saved}")

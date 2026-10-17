@@ -1,0 +1,37 @@
+# Publishes already-collected CSVs. No timer and no changes to the existing scan jobs.
+name: Publish collected scans to private dashboard
+on:
+  workflow_run:
+    workflows: [FTSE Full Scan, FTSE Watch, FTSE Outcomes]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ftse-dashboard-publisher
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out committed scan archive from main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Publish stored scans and verify persisted receipt
+        env:
+          FTSE_SCANS_SITE_URL: ${{ vars.FTSE_SCANS_SITE_URL }}
+          FTSE_SCANS_WRITE_TOKEN: ${{ secrets.FTSE_SCANS_WRITE_TOKEN }}
+          FTSE_SCANS_SITE_ACCESS: ${{ secrets.FTSE_SCANS_SITE_ACCESS }}
+          UPSTREAM_WORKFLOW: ${{ github.event.workflow_run.name || 'Manual archive publication' }}
+          UPSTREAM_CONCLUSION: ${{ github.event.workflow_run.conclusion || 'not-observed' }}
+          UPSTREAM_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: python publish_scans.py --ref HEAD --push

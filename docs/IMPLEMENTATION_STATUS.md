@@ -25,7 +25,7 @@ Live execution remains a separate future decision. There is no broker integratio
 
 The £1,000 sample account, three-position limit, 2% virtual daily loss guard and pilot thresholds are explicit proposed research defaults. They are not established live-money limits. An initial 5% movers threshold is configurable. The 1% daily ambition is not a promised result or an instruction to force trades.
 
-## Verification evidence
+## Original implementation verification evidence
 
 - All 90 Python regression tests pass. The suite covers original defects, exchange sessions, data ingestion, unit conversion, immutable revisions, future entry timing, conservative exit chronology, costs, allocation and persistence, legacy isolation, backup, scheduler locking and missed windows.
 - All 12 Node regression tests pass. The suite exercises the actual HTTP API, authentication, duplicate/stale/conflicting updates, persisted readback, archived exports, legacy isolation, synthetic provenance and production D1 SQL against SQLite.
@@ -43,3 +43,7 @@ The original `scan_data` CSVs, `ftse_outcomes.xlsx`, `ftse_scan_latest.xlsx` and
 ## Operating limits
 
 The source universe's quote units must be checked when instruments are added or refreshed. The paper model uses fractional synthetic fills and does not validate broker liquidity, borrow availability or all tax treatments. Synthetic short trading is disabled by default. The scheduler is intended for a single persistent Linux runner; the local Node server is a loopback development preview. Source for Docker and systemd is provided, but no production container or service has been launched.
+
+## Replay and reporting extension
+
+A separate follow-up PR adds progressive actual-engine replay, a read-only explanatory journal and complete daily aggregates. The [replay guide](REPLAY_AND_REPORTS.md) records source limitations and review acceptance. Fictional example setups do not demonstrate production signal discovery; recorded replays require original observation times and disclose current-rule reconstruction. Current scheduling and deployment settings remain unchanged.

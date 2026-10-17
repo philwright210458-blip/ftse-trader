@@ -35,6 +35,8 @@ export async function secureEqual(a, b) {
   return diff === 0;
 }
 export function validSnapshot(s) {
+  if (s?.replay !== undefined)
+    return "Replay frames cannot be ingested as current research snapshots.";
   if (
     !s ||
     s.schema_version !== 1 ||
@@ -92,6 +94,49 @@ export function validSnapshot(s) {
       ))
   )
     return "Invalid legacy record array.";
+  if (s.decision_journal !== undefined) {
+    const journal = s.decision_journal;
+    if (
+      !journal ||
+      !Array.isArray(journal.entries) ||
+      journal.entries.some(
+        (entry) =>
+          !entry ||
+          typeof entry !== "object" ||
+          Array.isArray(entry) ||
+          ["id", "at", "ticker", "kind", "title", "explanation", "status"].some(
+            (key) =>
+              entry[key] !== undefined &&
+              entry[key] !== null &&
+              typeof entry[key] !== "string",
+          ),
+      )
+    ) {
+      return "Invalid decision journal.";
+    }
+  }
+  if (s.daily_report !== undefined) {
+    const report = s.daily_report;
+    if (
+      !report ||
+      typeof report !== "object" ||
+      Array.isArray(report) ||
+      ["session", "as_of", "mode", "status", "headline", "text"].some(
+        (key) =>
+          report[key] !== undefined &&
+          report[key] !== null &&
+          typeof report[key] !== "string",
+      ) ||
+      ["summary", "limitations"].some(
+        (key) =>
+          report[key] !== undefined &&
+          (!Array.isArray(report[key]) ||
+            report[key].some((value) => typeof value !== "string")),
+      )
+    ) {
+      return "Invalid daily report.";
+    }
+  }
   const scalar = (record, keys, type) =>
     keys.every(
       (k) =>
@@ -378,6 +423,7 @@ export async function handleAPI(request, env, store) {
       closed_trades: s.paper.closed_trades,
       events: s.paper.events,
       legacy: s.legacy?.records || [],
+      journal: s.decision_journal?.entries || [],
     };
     if (!Object.hasOwn(tables, table))
       return json({ error: "Unknown export table." }, 400);
@@ -386,6 +432,38 @@ export async function handleAPI(request, env, store) {
         "content-type": "text/csv; charset=utf-8",
         "content-disposition": `attachment; filename="ftse-${s.mode === "synthetic-demo" ? "DEMONSTRATION-" : ""}${table}.csv"`,
         "cache-control": "no-store",
+      },
+    });
+  }
+  if (url.pathname === "/api/report") {
+    const requestedRevision = url.searchParams.get("revision");
+    if (requestedRevision && !/^[a-f0-9]{64}$/.test(requestedRevision))
+      return json({ error: "Invalid revision." }, 400);
+    const row = requestedRevision
+      ? await store.byRevision(requestedRevision)
+      : await store.latest();
+    const snapshot = row ? JSON.parse(row.payload) : null;
+    const report = snapshot?.daily_report;
+    if (!report)
+      return json(
+        { error: "No daily report is available for this snapshot." },
+        404,
+      );
+    const format = url.searchParams.get("format") || "text";
+    if (format === "json") return json({ revision: row.revision, report });
+    if (format !== "text")
+      return json({ error: "Use text or json report format." }, 400);
+    if (typeof report.text !== "string")
+      return json({ error: "This report has no text version." }, 404);
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(report.session)
+      ? report.session
+      : "session";
+    return new Response(report.text, {
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        "content-disposition": `attachment; filename="ftse-${snapshot.mode === "synthetic-demo" ? "DEMONSTRATION-" : ""}daily-report-${date}.txt"`,
+        "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
       },
     });
   }

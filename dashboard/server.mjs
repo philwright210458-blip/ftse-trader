@@ -144,6 +144,12 @@ export function createServer({
           "/presentation.mjs": "presentation.mjs",
         };
         let file = files[url.pathname];
+        if (/^\/[a-z][a-z0-9-]*\.mjs$/.test(url.pathname)) {
+          const modules = await readdir(path.join(here, "public"));
+          if (modules.includes(url.pathname.slice(1)))
+            file = url.pathname.slice(1);
+        }
+        if (url.pathname === "/replay.json") file = "replay.json";
         if (url.pathname === "/demo.json" && demo) file = "demo.json";
         if (!file) {
           res.writeHead(404);

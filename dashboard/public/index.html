@@ -27,6 +27,10 @@
       DEMONSTRATION DATA · Fictional prices and trades. This is a local
       interface example, not observed market performance.
     </div>
+    <div id="replay-banner" class="replay-banner" role="status" hidden>
+      <span id="replay-banner-text"></span
+      ><button id="exit-replay" type="button">Leave replay</button>
+    </div>
     <div class="shell">
       <aside>
         <div class="nav-label">WORKSPACE</div>
@@ -34,7 +38,10 @@
           <a href="#watch" data-view="watch">Morning watch</a
           ><a href="#detail" data-view="detail">Share detail</a
           ><a href="#portfolio" data-view="portfolio">Paper portfolio</a
-          ><a href="#history" data-view="history">History &amp; exports</a>
+          ><a href="#history" data-view="history">History &amp; exports</a
+          ><a href="#journal" data-view="journal">Decision journal</a
+          ><a href="#report" data-view="report">Daily report</a
+          ><a href="#replay" data-view="replay">Session replay</a>
         </nav>
         <div class="aside-note">
           <span class="dot"></span> Paper research environment
@@ -195,7 +202,7 @@
           </section>
         </section>
         <section id="history-view" class="view" hidden>
-          <section class="panel">
+          <section id="archive-panel" class="panel">
             <div class="panel-head">
               <div>
                 <h2>Snapshot archive</h2>
@@ -277,6 +284,171 @@
               <pre id="raw-snapshot"></pre>
             </details>
           </section>
+        </section>
+        <section id="journal-view" class="view" hidden>
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Why the system acted, or waited</h2>
+                <p id="journal-context">
+                  Explanations follow the observation clock of the selected
+                  snapshot.
+                </p>
+              </div>
+              <button id="journal-download" type="button">
+                Download journal CSV
+              </button>
+            </div>
+            <div class="filters">
+              <label
+                >Share<input
+                  id="journal-search"
+                  type="search"
+                  placeholder="Ticker or explanation" /></label
+              ><label
+                >Decision type<select id="journal-kind">
+                  <option value="all">All types</option>
+                </select></label
+              >
+            </div>
+            <div id="journal-entries"></div>
+            <p id="journal-coverage" class="muted"></p>
+            <details>
+              <summary>Inspect original journal fields</summary>
+              <pre id="journal-records"></pre>
+            </details>
+          </div>
+        </section>
+        <section id="report-view" class="view" hidden>
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2 id="report-headline">Daily paper-research report</h2>
+                <p id="report-context">
+                  No report is available until a snapshot is received.
+                </p>
+              </div>
+              <button id="report-download" type="button">
+                Download report text
+              </button>
+            </div>
+            <div id="report-summary"></div>
+          </div>
+          <div class="metrics" id="report-metrics"></div>
+          <section class="panel">
+            <h2>How the closed result adds up</h2>
+            <div id="report-costs"></div>
+            <p class="muted">
+              Spread and slippage are already included in the price result.
+              Commission and purchase tax are deducted separately.
+            </p>
+          </section>
+          <div class="two-col">
+            <section class="panel">
+              <h2>What the system saw</h2>
+              <div id="report-watch"></div>
+            </section>
+            <section class="panel">
+              <h2>Decisions and data quality</h2>
+              <div id="report-quality"></div>
+            </section>
+          </div>
+          <section class="panel">
+            <h2>Limits of this report</h2>
+            <ul id="report-limitations"></ul>
+            <details>
+              <summary>Inspect all report records</summary>
+              <pre id="report-records"></pre>
+            </details>
+          </section>
+        </section>
+        <section id="replay-view" class="view" hidden>
+          <section class="panel replay-controls">
+            <div class="panel-head">
+              <div>
+                <h2>Replay the evidence, one moment at a time</h2>
+                <p id="replay-description"></p>
+              </div>
+              <label
+                >Prepared scenario<select id="replay-scenario">
+                  <option>Loading scenarios</option>
+                </select></label
+              >
+            </div>
+            <p id="replay-provenance" class="replay-disclosure"></p>
+            <p id="replay-position" role="status" aria-live="polite"></p>
+            <div class="player-buttons">
+              <button id="replay-start" type="button">Start scenario</button
+              ><button id="replay-prev" type="button">Previous frame</button
+              ><button id="replay-play" type="button" aria-pressed="false">
+                Play</button
+              ><button id="replay-next" type="button">Next frame</button
+              ><button id="replay-reset" type="button">Reset</button
+              ><label
+                >Playback speed<select id="replay-speed">
+                  <option value="0.5">Half speed</option>
+                  <option value="1" selected>1 frame / second</option>
+                  <option value="2">2 frames / second</option>
+                  <option value="4">4 frames / second</option>
+                </select></label
+              >
+            </div>
+            <label class="scrub-label"
+              >Selected replay moment<input
+                id="replay-scrub"
+                type="range"
+                min="0"
+                max="0"
+                value="0"
+                step="1"
+            /></label>
+            <p id="replay-clock" class="simulated-clock" aria-live="off"></p>
+            <details>
+              <summary>Scenario assumptions and limitations</summary>
+              <ul id="replay-limitations"></ul>
+            </details>
+            <div class="local-replay">
+              <label
+                >Load a generated replay file<input
+                  id="replay-file"
+                  type="file"
+                  accept=".json,application/json"
+              /></label>
+              <p>
+                This file stays in your browser. Load a replay bundle generated
+                by the collector CLI, not raw market-data files. Maximum 12 MiB.
+              </p>
+              <p id="replay-import-status" role="status" aria-live="polite"></p>
+            </div>
+          </section>
+          <div id="replay-frame-content" hidden>
+            <div class="metrics" id="replay-facts"></div>
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2>Candles available at this moment</h2>
+                  <p id="replay-observation"></p>
+                </div>
+                <label>Share<select id="replay-share"></select></label>
+              </div>
+              <div id="replay-chart" class="chart"></div>
+              <p id="replay-share-reason"></p>
+            </section>
+            <div class="two-col">
+              <section class="panel">
+                <h2>Setups known at this moment</h2>
+                <div id="replay-setups"></div>
+              </section>
+              <section class="panel">
+                <h2>Latest explanations</h2>
+                <div id="replay-decisions"></div>
+                <p>
+                  <a href="#journal">Open this frame’s decision journal</a> ·
+                  <a href="#report">Open this frame’s daily report</a>
+                </p>
+              </section>
+            </div>
+          </div>
         </section>
         <footer>
           Prices and times are evidence, not assurances. No financial

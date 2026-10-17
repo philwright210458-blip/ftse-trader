@@ -1,0 +1,37 @@
+{
+  "enabled": false,
+  "database": "runtime/research.sqlite",
+  "snapshot": "runtime/snapshot.json",
+  "universe": "ftse_universe.csv",
+  "exclude_trusts": true,
+  "watch_top": 15,
+  "research": {
+    "capital": 1000.0,
+    "position_size": 100.0,
+    "max_positions": 3,
+    "daily_loss_limit_pct": 2.0,
+    "mover_threshold_pct": 5.0,
+    "interval_minutes": 15,
+    "max_data_lag_minutes": 20,
+    "signal_expiry_minutes": 45,
+    "spread_bps": 10.0,
+    "slippage_bps": 5.0,
+    "commission_per_side": 0.0,
+    "allow_synthetic_shorts": false,
+    "allow_same_session_reentry": false,
+    "minimum_pilot_sessions": 60,
+    "minimum_pilot_closed_trades": 100,
+    "maximum_pilot_drawdown_pct": 10.0,
+    "mode": "paper",
+    "stamp_duty_pct": 0.5,
+    "history_days": 60
+  },
+  "schedule": {
+    "pre_open_minutes": 15,
+    "bar_grace_seconds": 90,
+    "close_grace_minutes": 15,
+    "poll_seconds": 30,
+    "max_lateness_seconds": 180,
+    "lease_seconds": 1200
+  }
+}

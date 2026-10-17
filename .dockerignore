@@ -1,0 +1,8 @@
+.git
+runtime
+.env
+.env.*
+__pycache__
+*.sqlite*
+node_modules
+work

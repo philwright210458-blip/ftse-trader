@@ -1,0 +1,22 @@
+[Unit]
+Description=FTSE paper research collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ftse-research
+WorkingDirectory=/opt/ftse-trader
+EnvironmentFile=/etc/ftse-research.env
+ExecStart=/opt/ftse-trader/.venv/bin/python ftse_research_cli.py service --config /etc/ftse-research.json
+Restart=on-failure
+RestartSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ftse-research
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

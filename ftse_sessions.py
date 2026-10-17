@@ -3,6 +3,7 @@
 Session labels are exchange-calendars timestamps (midnight session date).
 Actual open/close timestamps are always returned in Europe/London.
 """
+
 from functools import lru_cache
 from zoneinfo import ZoneInfo
 import pandas as pd
@@ -43,8 +44,7 @@ def session_open_close(day):
     session = session_for(day)
     if session is None:
         raise ValueError(f"{_day(day).date()} is not a London exchange session")
-    return (calendar().session_open(session).tz_convert(UK_TZ),
-            calendar().session_close(session).tz_convert(UK_TZ))
+    return (calendar().session_open(session).tz_convert(UK_TZ), calendar().session_close(session).tz_convert(UK_TZ))
 
 
 def sessions_from(day, count):
@@ -54,4 +54,4 @@ def sessions_from(day, count):
     if session is None:
         raise ValueError("Holding period must start on an exchange session")
     start = calendar().sessions.get_loc(session)
-    return calendar().sessions[start:start + count]
+    return calendar().sessions[start : start + count]

@@ -1,4 +1,5 @@
 """Deterministic regressions for the seven reviewed simulation defects."""
+
 import argparse
 import tempfile
 import unittest
@@ -18,23 +19,53 @@ def stamp(value):
 
 def bars(start="2026-10-15 10:45", end="2026-10-15 16:15", **changes):
     times = pd.date_range(stamp(start), stamp(end), freq="15min")
-    result = pd.DataFrame({"open": 100., "high": 101., "low": 99., "close": 100., "volume": 10}, index=times)
+    result = pd.DataFrame({"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0, "volume": 10}, index=times)
     for column, value in changes.items():
         result[column] = value
     return result
 
 
 def candidate(key="test", day="2026-10-15", as_of="10:30", run_time="2026-10-15 10:31:12", ticker="TEST.L"):
-    return dict(key=key, day=day, as_of=as_of, run_time=run_time, mode="full", ticker=ticker,
-                direction="Long", stop=95., target=115., score=90., company="Test", index="FTSE 100",
-                setup="Range", touches=4, conflict=False, data_time=f"{day}T10:15:00+01:00", entry=100,
-                risk_pct=5, zone_low=96, zone_high=99)
+    return dict(
+        key=key,
+        day=day,
+        as_of=as_of,
+        run_time=run_time,
+        mode="full",
+        ticker=ticker,
+        direction="Long",
+        stop=95.0,
+        target=115.0,
+        score=90.0,
+        company="Test",
+        index="FTSE 100",
+        setup="Range",
+        touches=4,
+        conflict=False,
+        data_time=f"{day}T10:15:00+01:00",
+        entry=100,
+        risk_pct=5,
+        zone_low=96,
+        zone_high=99,
+    )
 
 
-def outcome(key="test", result="target", r=3., exit_time="2026-10-15T15:00:00+01:00", status="done"):
-    return dict(key=key, day="2026-10-15", ticker="TEST.L", direction="Long", horizon=1, status=status,
-                outcome=result, fill=100., exit_price=100 + 5 * r, exit_time=exit_time, r_gross=r,
-                fill_risk_pct=5., ambiguous=False)
+def outcome(key="test", result="target", r=3.0, exit_time="2026-10-15T15:00:00+01:00", status="done"):
+    return dict(
+        key=key,
+        day="2026-10-15",
+        ticker="TEST.L",
+        direction="Long",
+        horizon=1,
+        status=status,
+        outcome=result,
+        fill=100.0,
+        exit_price=100 + 5 * r,
+        exit_time=exit_time,
+        r_gross=r,
+        fill_risk_pct=5.0,
+        ambiguous=False,
+    )
 
 
 class Sessions(unittest.TestCase):
@@ -88,7 +119,9 @@ class Simulation(unittest.TestCase):
         data.loc[stamp("2026-10-15 10:45"), ["open", "high", "low", "close"]] = [116, 117, 114, 116]
         with tempfile.TemporaryDirectory() as folder, patch.object(sc, "fetch_data", return_value=data):
             path = Path(folder) / "outcomes.v2.csv"
-            out.evaluate_pending(pd.DataFrame([candidate()]), pd.DataFrame(columns=out.OUTCOME_COLUMNS), [1], "15m", "60d", 0, path)
+            out.evaluate_pending(
+                pd.DataFrame([candidate()]), pd.DataFrame(columns=out.OUTCOME_COLUMNS), [1], "15m", "60d", 0, path
+            )
             result = out.read_outcomes(path).iloc[0]
         self.assertEqual((result["status"], result["outcome"], result["fill"]), ("skipped", "gap", 116))
 
@@ -110,12 +143,17 @@ class Simulation(unittest.TestCase):
     def test_missing_before_target_is_not_a_win(self):
         data = bars().drop(stamp("2026-10-15 11:00"))
         data.loc[stamp("2026-10-15 11:15"), "high"] = 120
-        self.assertEqual(out.simulate("Long", 95, 115, stamp("2026-10-15 10:31:12"), data, 1, stamp("2026-10-15 17:00")).status, "pending")
+        self.assertEqual(
+            out.simulate("Long", 95, 115, stamp("2026-10-15 10:31:12"), data, 1, stamp("2026-10-15 17:00")).status,
+            "pending",
+        )
 
     def test_early_terminal_target_both_directions(self):
         for direction, stop, target, high, low in (("Long", 95, 115, 116, 99), ("Short", 105, 85, 101, 84)):
             data = bars("2026-10-15 10:45", "2026-10-15 10:45", high=high, low=low)
-            result = out.simulate(direction, stop, target, stamp("2026-10-15 10:31:12"), data, 5, stamp("2026-10-15 11:00"))
+            result = out.simulate(
+                direction, stop, target, stamp("2026-10-15 10:31:12"), data, 5, stamp("2026-10-15 11:00")
+            )
             self.assertEqual((result.status, result.outcome, result.r_gross), ("done", "target", 3))
 
     def test_ambiguous_assumes_stop_and_gaps_can_exceed_one_r(self):
@@ -135,7 +173,9 @@ class Simulation(unittest.TestCase):
         self.assertEqual(pd.Timestamp(result.exit_time), stamp("2026-10-19 16:30"))
 
     def test_zero_volume_is_unresolved(self):
-        result = out.simulate("Long", 95, 115, stamp("2026-10-15 10:31:12"), bars(volume=0), 1, stamp("2026-10-15 17:00"))
+        result = out.simulate(
+            "Long", 95, 115, stamp("2026-10-15 10:31:12"), bars(volume=0), 1, stamp("2026-10-15 17:00")
+        )
         self.assertEqual(result.status, "pending")
 
 
@@ -155,20 +195,28 @@ class DecisionsAndStatistics(unittest.TestCase):
             self.assertTrue(out.load_candidates(Path(folder), "15:30").empty)
 
     def test_realised_drawdown_exit_order_and_no_fixed_breakeven(self):
-        trades = pd.DataFrame([outcome("monday", "stop", -1, "2026-10-16T15:00:00+01:00"),
-                               outcome("tuesday", "target", 3, "2026-10-13T15:00:00+01:00"),
-                               outcome("wednesday", "stop", -1, "2026-10-14T15:00:00+01:00")])
+        trades = pd.DataFrame(
+            [
+                outcome("monday", "stop", -1, "2026-10-16T15:00:00+01:00"),
+                outcome("tuesday", "target", 3, "2026-10-13T15:00:00+01:00"),
+                outcome("wednesday", "stop", -1, "2026-10-14T15:00:00+01:00"),
+            ]
+        )
         stats = out.summarise(out.add_costs(trades, 0, 0))
         self.assertEqual(stats["drawdown"], -2)
         self.assertNotIn("breakeven", stats)
 
     def test_workbook_counts_missing_and_dates_realisation(self):
         frame = pd.DataFrame([candidate(), candidate("missing", ticker="MISS.L")])
-        outcomes = pd.DataFrame([outcome(exit_time="2026-10-16T15:00:00+01:00"), outcome("missing", "missing_coverage", status="nodata")])
+        outcomes = pd.DataFrame(
+            [outcome(exit_time="2026-10-16T15:00:00+01:00"), outcome("missing", "missing_coverage", status="nodata")]
+        )
         picks = {name: frame.assign(rank=[1, 2]) for name in out.PICK_SCENARIOS}
-        args = argparse.Namespace(horizons="1", horizon=1, cost_pct=0., stamp_duty_pct=0., pick_time="10:30", position_gbp=100.)
+        args = argparse.Namespace(
+            horizons="1", horizon=1, cost_pct=0.0, stamp_duty_pct=0.0, pick_time="10:30", position_gbp=100.0
+        )
         workbook = out.build_report(args, frame, frame, picks, outcomes, {}, "test")
-        row = [workbook["Summary"].cell(12,c).value for c in range(1,6)]
+        row = [workbook["Summary"].cell(12, c).value for c in range(1, 6)]
         self.assertEqual(row, [2, 1, 0, 0, 1])
         self.assertEqual(sum(row[1:]), len(frame))
         self.assertEqual(workbook["Daily"].cell(2, 1).value, "2026-10-16")
@@ -189,7 +237,9 @@ class DecisionsAndStatistics(unittest.TestCase):
 
     def test_empty_conflicting_candidates_keep_schema(self):
         with tempfile.TemporaryDirectory() as folder:
-            pd.DataFrame([dict(candidate(), conflict=True)])[sc.SETUP_COLUMNS].to_csv(Path(folder) / "setups.csv", index=False)
+            pd.DataFrame([dict(candidate(), conflict=True)])[sc.SETUP_COLUMNS].to_csv(
+                Path(folder) / "setups.csv", index=False
+            )
             result = out.load_candidates(Path(folder), "15:30")
             self.assertTrue(result.empty)
             self.assertIn("key", result.columns)

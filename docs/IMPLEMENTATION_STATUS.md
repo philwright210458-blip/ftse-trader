@@ -27,7 +27,7 @@ The £1,000 sample account, three-position limit, 2% virtual daily loss guard an
 
 ## Verification evidence
 
-- All 87 Python regression tests pass. The suite covers original defects, exchange sessions, data ingestion, unit conversion, immutable revisions, future entry timing, conservative exit chronology, costs, allocation and persistence, legacy isolation, backup, scheduler locking and missed windows.
+- All 90 Python regression tests pass. The suite covers original defects, exchange sessions, data ingestion, unit conversion, immutable revisions, future entry timing, conservative exit chronology, costs, allocation and persistence, legacy isolation, backup, scheduler locking and missed windows.
 - All 11 Node regression tests pass. The suite exercises the actual HTTP API, authentication, duplicate/stale/conflicting updates, persisted readback, archived exports, legacy isolation, synthetic provenance and production D1 SQL against SQLite.
 - A fictional Python ledger was published through the real local API and its stored revision was independently read back. The dashboard was inspected using that API response.
 - A single read-only Vodafone collection returned 193 validated daily/intraday candles and no collection errors. This is source-access evidence, not proof of opening-session latency, future availability or all-symbol coverage.

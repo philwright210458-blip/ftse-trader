@@ -1,4 +1,5 @@
 """One bounded Yahoo collection attempt; no inferred exchange quote units."""
+
 import pandas as pd
 
 from ftse_sessions import is_session, session_open_close
@@ -28,21 +29,32 @@ def collect_yahoo(universe, as_of=None, interval_minutes=15, downloader=None, in
     real_fetch = downloader is None
     if downloader is None:
         import yfinance as yf
+
         downloader = yf.download
     at = stamp(as_of)
     tickers = [item["ticker"] for item in universe]
     records, errors = [], []
     for interval, period in (("1d", "1mo"), (f"{interval_minutes}m", intraday_period)):
         try:
-            data = downloader(tickers=" ".join(tickers), interval=interval, period=period,
-                              progress=False, auto_adjust=False, group_by="ticker", threads=False, timeout=15)
+            data = downloader(
+                tickers=" ".join(tickers),
+                interval=interval,
+                period=period,
+                progress=False,
+                auto_adjust=False,
+                group_by="ticker",
+                threads=False,
+                timeout=15,
+            )
         except Exception as exc:
             errors.append(f"{interval} collection failed: {type(exc).__name__}")
             continue
         observed = stamp() if real_fetch else at
         for item in universe:
             ticker = item["ticker"]
-            frame = _frame(data, ticker, len(tickers)).rename(columns=lambda value: str(value).lower().replace(" ", "_"))
+            frame = _frame(data, ticker, len(tickers)).rename(
+                columns=lambda value: str(value).lower().replace(" ", "_")
+            )
             if frame.empty:
                 errors.append(f"{ticker}: no {interval} candles returned")
                 continue
@@ -72,9 +84,21 @@ def collect_yahoo(universe, as_of=None, interval_minutes=15, downloader=None, in
                         continue
                     adjusted = row.get("adj_close")
                     adjusted = None if adjusted is None or pd.isna(adjusted) else float(adjusted)
-                    candle = Candle(ticker, iso(ts), iso(end), float(row["open"]), float(row["high"]),
-                                    float(row["low"]), float(row["close"]), float(row["volume"]),
-                                    iso(observed), interval, item["quote_unit"], adjusted, "yahoo-delayed-unverified")
+                    candle = Candle(
+                        ticker,
+                        iso(ts),
+                        iso(end),
+                        float(row["open"]),
+                        float(row["high"]),
+                        float(row["low"]),
+                        float(row["close"]),
+                        float(row["volume"]),
+                        iso(observed),
+                        interval,
+                        item["quote_unit"],
+                        adjusted,
+                        "yahoo-delayed-unverified",
+                    )
                     candle.validate()
                     records.append(candle)
                     valid += 1

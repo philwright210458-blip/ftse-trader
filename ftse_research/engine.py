@@ -1,4 +1,5 @@
 """Session-aware research orchestration and conservative next-bar paper ledger."""
+
 from dataclasses import asdict
 from datetime import timedelta
 import json
@@ -41,18 +42,31 @@ class ResearchEngine:
         return self.store.ingest_candles(records)
 
     def _intraday(self, ticker, as_of):
-        return self.store.candles(ticker, f"{self.config.interval_minutes}m", as_of,
-                                  since=stamp(as_of) - pd.Timedelta(days=self.config.history_days))
+        return self.store.candles(
+            ticker,
+            f"{self.config.interval_minutes}m",
+            as_of,
+            since=stamp(as_of) - pd.Timedelta(days=self.config.history_days),
+        )
 
     def _watch(self, instrument, as_of):
         ticker = instrument["ticker"]
         day = day_of(as_of)
-        result = {**instrument, "ticker": ticker, "previous_session": None,
-                  "previous_change_pct": None, "opening_gap_pct": None,
-                  "intraday_change_pct": None, "last_price": None,
-                  "last_candle_at": None, "available_at": None,
-                  "status": "unavailable", "stale": True, "is_mover": False,
-                  "reason": "No completed current-session candle available"}
+        result = {
+            **instrument,
+            "ticker": ticker,
+            "previous_session": None,
+            "previous_change_pct": None,
+            "opening_gap_pct": None,
+            "intraday_change_pct": None,
+            "last_price": None,
+            "last_candle_at": None,
+            "available_at": None,
+            "status": "unavailable",
+            "stale": True,
+            "is_mover": False,
+            "reason": "No completed current-session candle available",
+        }
         if not is_session(day):
             result["reason"] = "The London exchange is closed for this date"
             return result
@@ -70,10 +84,15 @@ class ResearchEngine:
             result["previous_change_pct"] = change
             result["is_mover"] = abs(change) >= self.config.mover_threshold_pct
         else:
-            result["previous_data_warning"] = "Both previous-session adjusted closes are required; no reversal assumption made"
+            result["previous_data_warning"] = (
+                "Both previous-session adjusted closes are required; no reversal assumption made"
+            )
         opening, closing = session_bounds(day)
-        bars = [row for row in self._intraday(ticker, as_of)
-                if opening <= stamp(row["start"]) < closing and row["volume"] > 0]
+        bars = [
+            row
+            for row in self._intraday(ticker, as_of)
+            if opening <= stamp(row["start"]) < closing and row["volume"] > 0
+        ]
         if not bars:
             if stamp(as_of) < opening:
                 result["reason"] = "Previous movers prepared; waiting for the opening completed candle"
@@ -108,18 +127,30 @@ class ResearchEngine:
             else:
                 previous_sign = 1 if result["previous_change_pct"] > 0 else -1
                 result["status"] = "continuation" if movement == previous_sign else "reversal"
-                result["reason"] = "Three completed closes and the move from today's open agree; descriptive evidence, not a trading guarantee"
+                result["reason"] = (
+                    "Three completed closes and the move from today's open agree; descriptive evidence, not a trading guarantee"
+                )
         return result
 
     def watchlist(self, as_of=None):
         at = stamp(as_of)
-        return sorted((self._watch(item, at) for item in self.store.universe()),
-                      key=lambda row: (not row["is_mover"], -(abs(row["previous_change_pct"] or 0)), row["ticker"]))
+        return sorted(
+            (self._watch(item, at) for item in self.store.universe()),
+            key=lambda row: (not row["is_mover"], -(abs(row["previous_change_pct"] or 0)), row["ticker"]),
+        )
 
     def scanner_signals(self, as_of):
         """Reuse the existing range/breakout rules, with strict observed-data bounds."""
-        from ftse_trade_scanner import (INDEX_RULES, build_setups, find_swing_points,
-                                       cluster_zones, qualify_zones, dedupe_setups, annotate_conflicts)
+        from ftse_trade_scanner import (
+            INDEX_RULES,
+            build_setups,
+            find_swing_points,
+            cluster_zones,
+            qualify_zones,
+            dedupe_setups,
+            annotate_conflicts,
+        )
+
         at = stamp(as_of)
         day = day_of(at)
         if not is_session(day):
@@ -139,14 +170,38 @@ class ResearchEngine:
             swings = find_swing_points(frame, rule.swing_lookback)
             zones = cluster_zones(swings, rule.zone_tolerance_pct)
             zones = qualify_zones(zones, frame, rule)
-            setups = annotate_conflicts(dedupe_setups(build_setups(item.get("company", item["ticker"]),
-                       item["ticker"], item.get("index", "FTSE 100"), frame, zones, rule)))
+            setups = annotate_conflicts(
+                dedupe_setups(
+                    build_setups(
+                        item.get("company", item["ticker"]),
+                        item["ticker"],
+                        item.get("index", "FTSE 100"),
+                        frame,
+                        zones,
+                        rule,
+                    )
+                )
+            )
             for setup in setups:
                 if setup.conflict or setup.stale:
                     continue
-                result.append(Signal(item["ticker"], "scanner-" + setup.setup_type.lower(), setup.direction,
-                    last["end"], iso(at), setup.stop, setup.target, setup.entry,
-                    item["quote_unit"], setup.quality_score, setup.note, setup.zone.low, setup.zone.high))
+                result.append(
+                    Signal(
+                        item["ticker"],
+                        "scanner-" + setup.setup_type.lower(),
+                        setup.direction,
+                        last["end"],
+                        iso(at),
+                        setup.stop,
+                        setup.target,
+                        setup.entry,
+                        item["quote_unit"],
+                        setup.quality_score,
+                        setup.note,
+                        setup.zone.low,
+                        setup.zone.high,
+                    )
+                )
         return result
 
     def _register(self, signals, as_of, watches=()):
@@ -161,26 +216,54 @@ class ResearchEngine:
             # A signal submitted later cannot invent earlier availability. The
             # source-candle time stays separate for audit and deduplication.
             data["available_at"] = iso(max(stamp(data["available_at"]), stamp(as_of)))
-            data.update(status="pending", reason=data["reason"], session=session,
-                        entry=data["reference_price"], created_at=iso(as_of), configuration=self.config.to_dict(),
-                        mover_context=contexts.get(signal.ticker))
-            self.store.connection.execute("INSERT OR IGNORE INTO signals VALUES(?,?,?,?,?,?,?,?,?,?)",
-                (data["id"], data["ticker"], data["strategy"], data["direction"], session,
-                 data["signal_at"], data["available_at"], "pending", data["reason"], serialise(data)))
+            data.update(
+                status="pending",
+                reason=data["reason"],
+                session=session,
+                entry=data["reference_price"],
+                created_at=iso(as_of),
+                configuration=self.config.to_dict(),
+                mover_context=contexts.get(signal.ticker),
+            )
+            self.store.connection.execute(
+                "INSERT OR IGNORE INTO signals VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (
+                    data["id"],
+                    data["ticker"],
+                    data["strategy"],
+                    data["direction"],
+                    session,
+                    data["signal_at"],
+                    data["available_at"],
+                    "pending",
+                    data["reason"],
+                    serialise(data),
+                ),
+            )
 
     def _signal_state(self, signal, status, reason, at):
         signal.update(status=status, reason=reason, updated_at=iso(at))
-        self.store.connection.execute("UPDATE signals SET status=?,reason=?,payload=? WHERE id=?",
-                                      (status, reason, serialise(signal), signal["id"]))
-        self.store.event(key(signal["id"], status), at, "signal-" + status,
-                         {"ticker": signal["ticker"], "signal_id": signal["id"], "reason": reason})
+        self.store.connection.execute(
+            "UPDATE signals SET status=?,reason=?,payload=? WHERE id=?",
+            (status, reason, serialise(signal), signal["id"]),
+        )
+        self.store.event(
+            key(signal["id"], status),
+            at,
+            "signal-" + status,
+            {"ticker": signal["ticker"], "signal_id": signal["id"], "reason": reason},
+        )
 
     def _positions(self):
         return self.store.payloads("trades", "WHERE status='open' ORDER BY entry_at,id")
 
     def _balance(self):
         closed = self.store.payloads("trades", "WHERE status='closed'")
-        return self.config.capital + sum(trade["pnl"] for trade in closed) - sum(t["entry_commission"] + t.get("entry_stamp_duty", 0) for t in self._positions())
+        return (
+            self.config.capital
+            + sum(trade["pnl"] for trade in closed)
+            - sum(t["entry_commission"] + t.get("entry_stamp_duty", 0) for t in self._positions())
+        )
 
     def _friction(self, price, direction, entry=True, config=None):
         # Spread is a round-trip quote width: half on each execution.
@@ -198,7 +281,10 @@ class ResearchEngine:
             exit_estimate = self._friction(mark, trade["direction"], False, trade_config)
             factor = 100 if trade["quote_unit"] == "GBp" else 1
             side = 1 if trade["direction"] == "Long" else -1
-            equity += side * (exit_estimate - trade["entry_price"]) * trade["quantity"] / factor - trade_config.commission_per_side
+            equity += (
+                side * (exit_estimate - trade["entry_price"]) * trade["quantity"] / factor
+                - trade_config.commission_per_side
+            )
         return equity
 
     def _open_trade(self, signal, bar, at):
@@ -209,8 +295,10 @@ class ResearchEngine:
         if any(p["ticker"] == signal["ticker"] and p["strategy"] == signal["strategy"] for p in positions):
             return "A position is already open for this instrument and strategy"
         if not config.allow_same_session_reentry:
-            previous = self.store.rows("SELECT id FROM trades WHERE ticker=? AND strategy=? AND session=? LIMIT 1",
-                                       (signal["ticker"], signal["strategy"], signal["session"]))
+            previous = self.store.rows(
+                "SELECT id FROM trades WHERE ticker=? AND strategy=? AND session=? LIMIT 1",
+                (signal["ticker"], signal["strategy"], signal["session"]),
+            )
             if previous:
                 return "Same-session re-entry is disabled"
         if len(positions) >= config.max_positions:
@@ -224,36 +312,70 @@ class ResearchEngine:
         if self._equity(bar["start"]) <= session_start * (1 - config.daily_loss_limit_pct / 100):
             return "Daily virtual loss limit reached"
         price = self._friction(bar["open"], signal["direction"])
-        if not (signal["stop"] < price < signal["target"] if signal["direction"] == "Long"
-                else signal["target"] < price < signal["stop"]):
+        if not (
+            signal["stop"] < price < signal["target"]
+            if signal["direction"] == "Long"
+            else signal["target"] < price < signal["stop"]
+        ):
             return "Opening gap has crossed the original stop or target; entry rejected"
         factor = 100 if signal["quote_unit"] == "GBp" else 1
         quantity = config.position_size / (price / factor)
         if quantity <= 0:
             return "Commission leaves no virtual position capital"
-        trade = {"id": key("trade", signal["id"]), "signal_id": signal["id"],
-                 "ticker": signal["ticker"], "strategy": signal["strategy"],
-                 "direction": signal["direction"], "session": signal["session"],
-                 "status": "open", "entry_price": price, "entry_at": bar["start"],
-                 "entry_observed_at": bar["available_at"], "signal_at": signal["signal_at"],
-                 "signal_available_at": signal["available_at"], "quantity": quantity,
-                 "position_size": config.position_size, "stop": signal["stop"],
-                 "entry_notional": price * quantity / factor,
-                 "entry_stamp_duty": price * quantity / factor * stamp_rate,
-                 "entry_cash_required": entry_cash_required,
-                 "target": signal["target"], "quote_unit": signal["quote_unit"],
-                 "entry_commission": config.commission_per_side,
-                 "entry_friction": abs(price - bar["open"]) * quantity / factor,
-                 "last_processed_end": None, "exit_at": None, "exit_price": None,
-                 "pnl": None, "reason": "Queued signal filled at the first eligible future bar open",
-                 "model": "synthetic-short-no-borrow-model" if signal["direction"] == "Short" else "synthetic-next-bar-paper",
-                 "mover_context": signal.get("mover_context"),
-                 "fractional_quantity": True, "configuration": config.to_dict()}
-        self.store.connection.execute("INSERT INTO trades VALUES(?,?,?,?,?,?,?,?,?,?)",
-            (trade["id"], signal["id"], trade["ticker"], trade["strategy"], trade["direction"],
-             trade["session"], "open", trade["entry_at"], None, serialise(trade)))
+        trade = {
+            "id": key("trade", signal["id"]),
+            "signal_id": signal["id"],
+            "ticker": signal["ticker"],
+            "strategy": signal["strategy"],
+            "direction": signal["direction"],
+            "session": signal["session"],
+            "status": "open",
+            "entry_price": price,
+            "entry_at": bar["start"],
+            "entry_observed_at": bar["available_at"],
+            "signal_at": signal["signal_at"],
+            "signal_available_at": signal["available_at"],
+            "quantity": quantity,
+            "position_size": config.position_size,
+            "stop": signal["stop"],
+            "entry_notional": price * quantity / factor,
+            "entry_stamp_duty": price * quantity / factor * stamp_rate,
+            "entry_cash_required": entry_cash_required,
+            "target": signal["target"],
+            "quote_unit": signal["quote_unit"],
+            "entry_commission": config.commission_per_side,
+            "entry_friction": abs(price - bar["open"]) * quantity / factor,
+            "last_processed_end": None,
+            "exit_at": None,
+            "exit_price": None,
+            "pnl": None,
+            "reason": "Queued signal filled at the first eligible future bar open",
+            "model": (
+                "synthetic-short-no-borrow-model" if signal["direction"] == "Short" else "synthetic-next-bar-paper"
+            ),
+            "mover_context": signal.get("mover_context"),
+            "fractional_quantity": True,
+            "configuration": config.to_dict(),
+        }
+        self.store.connection.execute(
+            "INSERT INTO trades VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (
+                trade["id"],
+                signal["id"],
+                trade["ticker"],
+                trade["strategy"],
+                trade["direction"],
+                trade["session"],
+                "open",
+                trade["entry_at"],
+                None,
+                serialise(trade),
+            ),
+        )
         self._signal_state(signal, "open", trade["reason"], at)
-        self.store.event(key(trade["id"], "open"), at, "paper-open", {"ticker": trade["ticker"], "trade_id": trade["id"]})
+        self.store.event(
+            key(trade["id"], "open"), at, "paper-open", {"ticker": trade["ticker"], "trade_id": trade["id"]}
+        )
         return None
 
     def _exit_trade(self, trade, bar, at):
@@ -265,21 +387,28 @@ class ResearchEngine:
         if stamp(bar["start"]) != expected_start or bar["volume"] <= 0:
             # A missing/zero-volume interval could hide an earlier stop. Later
             # favourable bars cannot resolve it until the gap is recovered.
-            self.store.event(key(trade["id"], "data-gap", iso(expected_start)), at, "unresolved-data-gap",
-                             {"ticker": trade["ticker"], "trade_id": trade["id"],
-                              "reason": "A completed traded candle is missing; later outcomes withheld"})
+            self.store.event(
+                key(trade["id"], "data-gap", iso(expected_start)),
+                at,
+                "unresolved-data-gap",
+                {
+                    "ticker": trade["ticker"],
+                    "trade_id": trade["id"],
+                    "reason": "A completed traded candle is missing; later outcomes withheld",
+                },
+            )
             return
         long = trade["direction"] == "Long"
         raw_exit, reason = None, None
         stop, target = trade["stop"], trade["target"]
-        if (bar["open"] <= stop if long else bar["open"] >= stop):
+        if bar["open"] <= stop if long else bar["open"] >= stop:
             raw_exit, reason = bar["open"], "gap-stop"
-        elif (bar["open"] >= target if long else bar["open"] <= target):
+        elif bar["open"] >= target if long else bar["open"] <= target:
             # Conservative target fill: do not award a favourable gap improvement.
             raw_exit, reason = target, "gap-target"
-        elif (bar["low"] <= stop if long else bar["high"] >= stop):
+        elif bar["low"] <= stop if long else bar["high"] >= stop:
             raw_exit, reason = stop, "stop"  # stop wins ambiguous same-bar stop/target
-        elif (bar["high"] >= target if long else bar["low"] <= target):
+        elif bar["high"] >= target if long else bar["low"] <= target:
             raw_exit, reason = target, "target"
         if is_session(trade["session"]):
             _, close = session_bounds(trade["session"])
@@ -293,45 +422,78 @@ class ResearchEngine:
             gross = (1 if long else -1) * (price - trade["entry_price"]) * trade["quantity"] / factor
             commissions = trade["entry_commission"] + trade_config.commission_per_side
             purchase_tax = trade.get("entry_stamp_duty", 0)
-            trade.update(status="closed", exit_price=price, exit_at=bar["end"],
-                         exit_observed_at=iso(at), exit_time_precision="completed-bar; intra-bar time unknown",
-                         reason=reason, gross_pnl=gross, pnl=gross - commissions - purchase_tax,
-                         costs=commissions + purchase_tax + trade["entry_friction"] + abs(price - raw_exit) * trade["quantity"] / factor)
+            trade.update(
+                status="closed",
+                exit_price=price,
+                exit_at=bar["end"],
+                exit_observed_at=iso(at),
+                exit_time_precision="completed-bar; intra-bar time unknown",
+                reason=reason,
+                gross_pnl=gross,
+                pnl=gross - commissions - purchase_tax,
+                costs=commissions
+                + purchase_tax
+                + trade["entry_friction"]
+                + abs(price - raw_exit) * trade["quantity"] / factor,
+            )
             signal = self.store.payloads("signals", "WHERE id=?", (trade["signal_id"],))[0]
             self._signal_state(signal, "closed", reason, at)
-            self.store.event(key(trade["id"], "closed"), at, "paper-close",
-                             {"ticker": trade["ticker"], "trade_id": trade["id"], "pnl": trade["pnl"], "reason": reason})
-        self.store.connection.execute("UPDATE trades SET status=?,exit_at=?,payload=? WHERE id=?",
-                                     (trade["status"], trade["exit_at"], serialise(trade), trade["id"]))
+            self.store.event(
+                key(trade["id"], "closed"),
+                at,
+                "paper-close",
+                {"ticker": trade["ticker"], "trade_id": trade["id"], "pnl": trade["pnl"], "reason": reason},
+            )
+        self.store.connection.execute(
+            "UPDATE trades SET status=?,exit_at=?,payload=? WHERE id=?",
+            (trade["status"], trade["exit_at"], serialise(trade), trade["id"]),
+        )
 
     def _advance(self, as_of):
         pending = self.store.payloads("signals", "WHERE status='pending' ORDER BY available_at,id")
         candidates = []
         for signal in pending:
             if signal.get("configuration") != self.config.to_dict():
-                self._signal_state(signal, "skipped", "Pending signal superseded by a configuration change; a new observation is required", as_of)
+                self._signal_state(
+                    signal,
+                    "skipped",
+                    "Pending signal superseded by a configuration change; a new observation is required",
+                    as_of,
+                )
                 continue
             if not is_session(signal["session"]):
                 self._signal_state(signal, "skipped", "Signal date is not an exchange session", as_of)
                 continue
             opening, close = session_bounds(signal["session"])
             expiry = min(stamp(signal["available_at"]) + pd.Timedelta(minutes=self.config.signal_expiry_minutes), close)
-            bars = [bar for bar in self._intraday(signal["ticker"], as_of)
-                    if stamp(bar["start"]) >= max(stamp(signal["available_at"]), opening) and stamp(bar["start"]) < close]
+            bars = [
+                bar
+                for bar in self._intraday(signal["ticker"], as_of)
+                if stamp(bar["start"]) >= max(stamp(signal["available_at"]), opening) and stamp(bar["start"]) < close
+            ]
             if bars:
                 first = bars[0]
                 eligible_after = max(stamp(signal["available_at"]), opening)
                 offset = (eligible_after - opening).total_seconds() / 60
-                expected_start = opening + pd.Timedelta(minutes=math.ceil(offset / self.config.interval_minutes) * self.config.interval_minutes)
+                expected_start = opening + pd.Timedelta(
+                    minutes=math.ceil(offset / self.config.interval_minutes) * self.config.interval_minutes
+                )
                 lag = (stamp(first["available_at"]) - stamp(first["end"])).total_seconds() / 60
                 if stamp(first["start"]) != expected_start:
-                    self._signal_state(signal, "missing", "First eligible entry interval is missing; later bars cannot replace it", as_of)
+                    self._signal_state(
+                        signal,
+                        "missing",
+                        "First eligible entry interval is missing; later bars cannot replace it",
+                        as_of,
+                    )
                 elif first["quote_unit"] != signal["quote_unit"]:
                     self._signal_state(signal, "skipped", "Signal and candle quote units disagree", as_of)
                 elif first["volume"] <= 0:
                     self._signal_state(signal, "skipped", "First eligible entry candle has zero traded volume", as_of)
                 elif stamp(first["start"]) > expiry or lag > self.config.max_data_lag_minutes:
-                    self._signal_state(signal, "missed", "First eligible future entry bar was unavailable or observed too late", as_of)
+                    self._signal_state(
+                        signal, "missed", "First eligible future entry bar was unavailable or observed too late", as_of
+                    )
                 else:
                     candidates.append((first["start"], signal["id"], signal, first))
             elif stamp(as_of) > expiry:
@@ -343,10 +505,16 @@ class ResearchEngine:
         tickers = {trade["ticker"] for trade in open_positions} | {item[2]["ticker"] for item in candidates}
         for ticker in tickers:
             knowledge_clock = None
-            earliest_entry = min((trade["entry_at"] for trade in open_positions if trade["ticker"] == ticker), default=None)
+            earliest_entry = min(
+                (trade["entry_at"] for trade in open_positions if trade["ticker"] == ticker), default=None
+            )
             # Scanner history is bounded; an unresolved older position must
             # still be recoverable from the complete preserved archive.
-            bars = self.store.candles(ticker, f"{self.config.interval_minutes}m", as_of, since=earliest_entry) if earliest_entry else self._intraday(ticker, as_of)
+            bars = (
+                self.store.candles(ticker, f"{self.config.interval_minutes}m", as_of, since=earliest_entry)
+                if earliest_entry
+                else self._intraday(ticker, as_of)
+            )
             for bar in bars:
                 # Exit proceeds/capacity become usable only after all preceding
                 # observations are available, including late gap recovery.
@@ -369,9 +537,16 @@ class ResearchEngine:
         for trade in self._positions():
             _, close = session_bounds(trade["session"])
             if stamp(as_of) > close + pd.Timedelta(minutes=self.config.max_data_lag_minutes):
-                self.store.event(key(trade["id"], "missing-close"), as_of, "unresolved-close",
-                    {"ticker": trade["ticker"], "trade_id": trade["id"],
-                     "reason": "Session close candle unavailable; position remains open until evidence arrives"})
+                self.store.event(
+                    key(trade["id"], "missing-close"),
+                    as_of,
+                    "unresolved-close",
+                    {
+                        "ticker": trade["ticker"],
+                        "trade_id": trade["id"],
+                        "reason": "Session close candle unavailable; position remains open until evidence arrives",
+                    },
+                )
 
     def run(self, as_of=None, signals=None):
         at = stamp(as_of)
@@ -397,27 +572,62 @@ class ResearchEngine:
             self._register(generated, at, watches)
             self._advance(at)
             health = self.store.metadata("collection_health", {})
-            payload = {"id": run_id, "started_at": iso(at), "completed_at": iso(at),
-                       "status": health.get("state", "ok"), "session": day,
-                       "instruments": len(universe), "candidate_count": len(generated),
-                       "universe_hash": key(serialise(universe)), "config_hash": key(serialise(self.config.to_dict())),
-                       "strategy_version": "legacy-zone-rules/opening-context-v1", "mode": self.config.mode}
-            self.store.connection.execute("INSERT INTO runs VALUES(?,?,?,?,?,?,?)",
-                (run_id, iso(at), iso(at), payload["status"], payload["universe_hash"], payload["config_hash"], serialise(payload)))
+            payload = {
+                "id": run_id,
+                "started_at": iso(at),
+                "completed_at": iso(at),
+                "status": health.get("state", "ok"),
+                "session": day,
+                "instruments": len(universe),
+                "candidate_count": len(generated),
+                "universe_hash": key(serialise(universe)),
+                "config_hash": key(serialise(self.config.to_dict())),
+                "strategy_version": "legacy-zone-rules/opening-context-v1",
+                "mode": self.config.mode,
+            }
+            self.store.connection.execute(
+                "INSERT INTO runs VALUES(?,?,?,?,?,?,?)",
+                (
+                    run_id,
+                    iso(at),
+                    iso(at),
+                    payload["status"],
+                    payload["universe_hash"],
+                    payload["config_hash"],
+                    serialise(payload),
+                ),
+            )
             for watch in watches:
-                self.store.connection.execute("INSERT OR IGNORE INTO watches VALUES(?,?,?,?,?,?)",
-                    (key(run_id, watch["ticker"]), run_id, watch["ticker"], day, iso(at), serialise(watch)))
+                self.store.connection.execute(
+                    "INSERT OR IGNORE INTO watches VALUES(?,?,?,?,?,?)",
+                    (key(run_id, watch["ticker"]), run_id, watch["ticker"], day, iso(at), serialise(watch)),
+                )
                 # One first-eligible observation per instrument/day is retained
                 # for same-time comparisons, preventing later outcome selection.
                 if not watch["stale"] and watch["last_price"] is not None:
-                    sample = {**watch, "at": iso(at), "session": day, "config_hash": payload["config_hash"],
-                              "configuration": self.config.to_dict(),
-                              "sample_kind": "scanner-decision" if generated else "first-session-observation",
-                              "selected_candidate_ids": [s.to_dict()["id"] if isinstance(s, Signal) else
-                                                         Signal(**s).to_dict()["id"] for s in generated
-                                                         if (s.ticker if isinstance(s, Signal) else s["ticker"]) == watch["ticker"]]}
-                    self.store.connection.execute("INSERT OR IGNORE INTO evaluation_samples VALUES(?,?,?,?,?)",
-                        (key(run_id if generated else day, watch["ticker"]), day, watch["ticker"], iso(at), serialise(sample)))
+                    sample = {
+                        **watch,
+                        "at": iso(at),
+                        "session": day,
+                        "config_hash": payload["config_hash"],
+                        "configuration": self.config.to_dict(),
+                        "sample_kind": "scanner-decision" if generated else "first-session-observation",
+                        "selected_candidate_ids": [
+                            s.to_dict()["id"] if isinstance(s, Signal) else Signal(**s).to_dict()["id"]
+                            for s in generated
+                            if (s.ticker if isinstance(s, Signal) else s["ticker"]) == watch["ticker"]
+                        ],
+                    }
+                    self.store.connection.execute(
+                        "INSERT OR IGNORE INTO evaluation_samples VALUES(?,?,?,?,?)",
+                        (
+                            key(run_id if generated else day, watch["ticker"]),
+                            day,
+                            watch["ticker"],
+                            iso(at),
+                            serialise(sample),
+                        ),
+                    )
             self.store.set_metadata("last_engine_at", iso(at))
             if any(not watch["stale"] for watch in watches) and health.get("state", "ok") != "failed":
                 self.store.set_metadata("last_success_at", iso(at))
@@ -425,6 +635,7 @@ class ResearchEngine:
 
     def collect_and_run(self, tickers=None, as_of=None):
         from .collection import collect_yahoo
+
         at = stamp(as_of)
         universe = self.store.universe()
         if tickers and isinstance(tickers[0], dict):
@@ -438,25 +649,40 @@ class ResearchEngine:
             universe = [record for record in universe if record["ticker"] in wanted]
             if wanted - {record["ticker"] for record in universe}:
                 raise ValueError("Every collected ticker must have explicit universe metadata and quote units")
-        has_history = bool(universe) and all(self.store.rows(
-            "SELECT 1 FROM candles WHERE ticker=? AND interval=? LIMIT 1",
-            (item["ticker"], f"{self.config.interval_minutes}m")) for item in universe)
-        records, failures = collect_yahoo(universe, at, self.config.interval_minutes,
-                                         intraday_period="5d" if has_history else "60d")
+        has_history = bool(universe) and all(
+            self.store.rows(
+                "SELECT 1 FROM candles WHERE ticker=? AND interval=? LIMIT 1",
+                (item["ticker"], f"{self.config.interval_minutes}m"),
+            )
+            for item in universe
+        )
+        records, failures = collect_yahoo(
+            universe, at, self.config.interval_minutes, intraday_period="5d" if has_history else "60d"
+        )
         counts = self.ingest_candles(records)
         # Actual availability is after the complete collection/ingestion work.
         # Caller as_of is a scheduling hint, never a historical execution clock.
         at = stamp()
-        self.store.set_metadata("collection_health", {"state": ("degraded" if records else "failed") if failures else "ok",
-            "last_error": "; ".join(failures) or None, "at": iso(at), "failures": failures, **counts})
+        self.store.set_metadata(
+            "collection_health",
+            {
+                "state": ("degraded" if records else "failed") if failures else "ok",
+                "last_error": "; ".join(failures) or None,
+                "at": iso(at),
+                "failures": failures,
+                **counts,
+            },
+        )
         return self.run()
 
     def evaluate(self, as_of=None, max_baseline_samples=None):
         from .evaluation import evaluate
+
         return evaluate(self, stamp(as_of), max_baseline_samples=max_baseline_samples)
 
     def seed_demo(self, as_of=None):
         from .fixtures import seed_demo
+
         return seed_demo(self, as_of)
 
     def snapshot(self, as_of=None):
@@ -476,50 +702,126 @@ class ResearchEngine:
         health = self.store.metadata("collection_health", {"state": "not-collected", "last_error": None})
         fresh = sum(not item["stale"] for item in watches)
         if status == "open" and fresh < len(watches) and health.get("state") != "failed":
-            health = {**health, "state": "degraded", "last_error": health.get("last_error") or "Some instruments have missing or stale completed candles"}
-        priority = list(dict.fromkeys([p["ticker"] for p in positions] +
-                        [w["ticker"] for w in watches if w["is_mover"]] +
-                        [s["ticker"] for s in signals] + [w["ticker"] for w in watches]))[:30]
-        candles = {ticker: [{"time": row["start"], **{k: row[k] for k in ("open", "high", "low", "close", "volume")},
-                           "available_at": row["available_at"]} for row in self._intraday(ticker, at)[-60:]] for ticker in priority}
+            health = {
+                **health,
+                "state": "degraded",
+                "last_error": health.get("last_error") or "Some instruments have missing or stale completed candles",
+            }
+        priority = list(
+            dict.fromkeys(
+                [p["ticker"] for p in positions]
+                + [w["ticker"] for w in watches if w["is_mover"]]
+                + [s["ticker"] for s in signals]
+                + [w["ticker"] for w in watches]
+            )
+        )[:30]
+        candles = {
+            ticker: [
+                {
+                    "time": row["start"],
+                    **{k: row[k] for k in ("open", "high", "low", "close", "volume")},
+                    "available_at": row["available_at"],
+                }
+                for row in self._intraday(ticker, at)[-60:]
+            ]
+            for ticker in priority
+        }
         evaluation = self.evaluate(at, max_baseline_samples=200)
         for name, limit in (("cashflow_curve", 300), ("entry_cohorts", 90), ("session_daily_returns", 90)):
             evaluation[name] = evaluation[name][-limit:]
-        counts = {table: self.store.rows(f"SELECT COUNT(*) AS n FROM {table}")[0]["n"]
-                  for table in ("signals", "trades", "events", "runs", "candles", "evaluation_samples")}
-        legacy_rows = self.store.rows("SELECT source,payload FROM legacy_records ORDER BY source,source_hash,row_number,id")
-        legacy_counts = {row["source"]: row["n"] for row in self.store.rows(
-            "SELECT source,COUNT(*) AS n FROM legacy_records GROUP BY source ORDER BY source")}
-        legacy = {"label": "Historical scanner records; old simulation unverified", "counts": legacy_counts,
-                  "records": [{**json.loads(row["payload"]), "source": row["source"],
-                               "validation": "legacy-unverified"} for row in legacy_rows]}
-        result = {"schema_version": 1, "generated_at": iso(at), "last_success_at": self.store.metadata("last_success_at"),
-            "mode": self.config.mode, "market": {"session": day, "open": opening, "close": closing,
-                "status": status, "timezone": "Europe/London"},
-            "health": {**health, "expected_interval_minutes": self.config.interval_minutes,
-                       "fresh_instruments": fresh, "total_instruments": len(watches)},
-            "config": self.config.to_dict(), "watchlist": watches, "candidates": signals,
-            "candles": candles, "paper": {"capital": self.config.capital, "realised_balance": self._balance(),
-                "equity": self._equity(at), "positions": positions, "closed_trades": closed,
-                "events": self.store.payloads("events", "ORDER BY at DESC,id LIMIT 100")},
-            "runs": runs, "evaluation": evaluation, "universe": self.store.universe(), "legacy": legacy,
-            "coverage": {"complete_journal_counts": counts, "watchlist": "full configured universe",
-                "truncated": counts["signals"] > len(signals) or counts["trades"] > len(positions) + len(closed)
-                             or counts["runs"] > len(runs) or len(watches) > len(candles)
-                             or counts["evaluation_samples"] > 200,
-                "included": {"watchlist": len(watches), "signals": len(signals), "closed_trades": len(closed), "legacy_records": len(legacy_rows),
-                    "runs": len(runs), "chart_instruments": len(candles), "baseline_samples": len(evaluation["baselines"])},
-                "dashboard_limits": {"chart_instruments": 30, "chart_candles_per_instrument": 60,
-                    "recent_candidates": 150, "recent_closed_trades": 100, "recent_events": 100,
-                    "recent_runs": 50, "baseline_samples": 200},
-                "full_history": "Complete immutable candles, candidates, trades and events remain in the SQLite backup/export"},
-            "warnings": ["Paper research only. No real orders are sent.",
-                         "1% a day is an aspiration to measure, not a forecast or promise.",
-                         "Prices may be delayed. Candle fills are synthetic; fractional quantities and short borrowing are not validated.",
-                         "Proposed pilot criteria cannot automatically approve real trading.",
-                         "Dashboard history is bounded. Full records remain in the SQLite journal and exports.",
-                         "Long paper purchases include configurable illustrative stamp duty. Other tax, market impact and stock borrow costs are not modelled.",
-                         "£100 position size is simulated share notional; entry commission and purchase duty require additional available cash."]}
+        counts = {
+            table: self.store.rows(f"SELECT COUNT(*) AS n FROM {table}")[0]["n"]
+            for table in ("signals", "trades", "events", "runs", "candles", "evaluation_samples")
+        }
+        legacy_rows = self.store.rows(
+            "SELECT source,payload FROM legacy_records ORDER BY source,source_hash,row_number,id"
+        )
+        legacy_counts = {
+            row["source"]: row["n"]
+            for row in self.store.rows(
+                "SELECT source,COUNT(*) AS n FROM legacy_records GROUP BY source ORDER BY source"
+            )
+        }
+        legacy = {
+            "label": "Historical scanner records; old simulation unverified",
+            "counts": legacy_counts,
+            "records": [
+                {**json.loads(row["payload"]), "source": row["source"], "validation": "legacy-unverified"}
+                for row in legacy_rows
+            ],
+        }
+        result = {
+            "schema_version": 1,
+            "generated_at": iso(at),
+            "last_success_at": self.store.metadata("last_success_at"),
+            "mode": self.config.mode,
+            "market": {
+                "session": day,
+                "open": opening,
+                "close": closing,
+                "status": status,
+                "timezone": "Europe/London",
+            },
+            "health": {
+                **health,
+                "expected_interval_minutes": self.config.interval_minutes,
+                "fresh_instruments": fresh,
+                "total_instruments": len(watches),
+            },
+            "config": self.config.to_dict(),
+            "watchlist": watches,
+            "candidates": signals,
+            "candles": candles,
+            "paper": {
+                "capital": self.config.capital,
+                "realised_balance": self._balance(),
+                "equity": self._equity(at),
+                "positions": positions,
+                "closed_trades": closed,
+                "events": self.store.payloads("events", "ORDER BY at DESC,id LIMIT 100"),
+            },
+            "runs": runs,
+            "evaluation": evaluation,
+            "universe": self.store.universe(),
+            "legacy": legacy,
+            "coverage": {
+                "complete_journal_counts": counts,
+                "watchlist": "full configured universe",
+                "truncated": counts["signals"] > len(signals)
+                or counts["trades"] > len(positions) + len(closed)
+                or counts["runs"] > len(runs)
+                or len(watches) > len(candles)
+                or counts["evaluation_samples"] > 200,
+                "included": {
+                    "watchlist": len(watches),
+                    "signals": len(signals),
+                    "closed_trades": len(closed),
+                    "legacy_records": len(legacy_rows),
+                    "runs": len(runs),
+                    "chart_instruments": len(candles),
+                    "baseline_samples": len(evaluation["baselines"]),
+                },
+                "dashboard_limits": {
+                    "chart_instruments": 30,
+                    "chart_candles_per_instrument": 60,
+                    "recent_candidates": 150,
+                    "recent_closed_trades": 100,
+                    "recent_events": 100,
+                    "recent_runs": 50,
+                    "baseline_samples": 200,
+                },
+                "full_history": "Complete immutable candles, candidates, trades and events remain in the SQLite backup/export",
+            },
+            "warnings": [
+                "Paper research only. No real orders are sent.",
+                "1% a day is an aspiration to measure, not a forecast or promise.",
+                "Prices may be delayed. Candle fills are synthetic; fractional quantities and short borrowing are not validated.",
+                "Proposed pilot criteria cannot automatically approve real trading.",
+                "Dashboard history is bounded. Full records remain in the SQLite journal and exports.",
+                "Long paper purchases include configurable illustrative stamp duty. Other tax, market impact and stock borrow costs are not modelled.",
+                "£100 position size is simulated share notional; entry commission and purchase duty require additional available cash.",
+            ],
+        }
         # Enforce a firm transfer budget even with unusually long company names,
         # notes or strategy explanations. The complete journal is never trimmed.
         budget = 1_500_000
@@ -538,7 +840,11 @@ class ResearchEngine:
                 raise ValueError("Universe metadata alone exceeds the dashboard transfer budget")
             result["coverage"]["size_budget_applied"] = True
             result["coverage"]["truncated"] = True
-        result["coverage"]["included"].update(signals=len(result["candidates"]), chart_instruments=len(result["candles"]),
-            closed_trades=len(result["paper"]["closed_trades"]), baseline_samples=len(result["evaluation"]["baselines"]),
-            legacy_records=len(result["legacy"]["records"]))
+        result["coverage"]["included"].update(
+            signals=len(result["candidates"]),
+            chart_instruments=len(result["candles"]),
+            closed_trades=len(result["paper"]["closed_trades"]),
+            baseline_samples=len(result["evaluation"]["baselines"]),
+            legacy_records=len(result["legacy"]["records"]),
+        )
         return result

@@ -1,18 +1,341 @@
-import {researchProvenance} from '../public/presentation.mjs';
-import test from 'node:test';import assert from 'node:assert/strict';import {mkdtemp,rm,readFile}from'node:fs/promises';import os from'node:os';import path from'node:path';import {createServer}from'../server.mjs';import{canRead,toCSV,csvCell,validSnapshot}from'../api.mjs';
-const fixture=(at=new Date(Date.now()-60000).toISOString())=>({schema_version:1,generated_at:at,last_success_at:at,market:{session:at.slice(0,10),status:'open'},health:{state:'ok',expected_interval_minutes:15},watchlist:[{ticker:'EXAMPLE',company:'=HYPERLINK("https://example.invalid")'}],candidates:[],candles:{EXAMPLE:[{time:at,open:100,high:102,low:99,close:101,volume:200}]},paper:{capital:100,realised_balance:100,equity:100,positions:[],closed_trades:[],events:[]},runs:[],evaluation:{sample_count:0}});
-test('HTTP ingestion is authenticated, idempotent, durable and rejects stale or conflicting updates',async()=>{const dir=await mkdtemp(path.join(os.tmpdir(),'ftse-dashboard-'));const server=createServer({directory:dir,token:'test-secret'});await new Promise(r=>server.listen(0,'127.0.0.1',r));const url=`http://127.0.0.1:${server.address().port}`;const post=(body,token='test-secret')=>fetch(url+'/api/ingest',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify(body)});try{assert.equal((await fetch(url+'/api/snapshot').then(r=>r.json())).snapshot,null);assert.equal((await post(fixture(),'wrong')).status,401);const s=fixture();assert.equal((await post(s)).status,201);assert.equal((await post(s)).status,200);assert.equal((await post({...s,evaluation:{changed:true}})).status,409);assert.equal((await post(fixture(new Date(Date.parse(s.generated_at)-60000).toISOString()))).status,409);assert.equal((await post({...s,schema_version:7})).status,422);assert.equal((await fetch(url+'/api/ingest-status')).status,401);const ack=await fetch(url+'/api/ingest-status',{headers:{authorization:'Bearer test-secret'}}).then(r=>r.json());assert.equal(ack.generated_at,s.generated_at);assert.equal(Object.hasOwn(ack,'snapshot'),false);const got=await fetch(url+'/api/snapshot').then(r=>r.json());assert.equal(ack.revision,got.revision);assert.equal(got.snapshot.generated_at,s.generated_at);const disk=JSON.parse(await readFile(path.join(dir,'current.json'),'utf8'));assert.equal(disk.revision,got.revision);const csv=await fetch(url+'/api/export?table=watchlist').then(r=>r.text());assert.ok(csv.includes("'=HYPERLINK"));assert.equal((await fetch(url+'/api/export?table=secret')).status,400);assert.equal((await fetch(url+'/demo.json')).status,404);assert.equal((await fetch(url+'/api/ingest',{method:'POST',headers:{origin:'https://evil.example',authorization:'Bearer test-secret','content-type':'application/json'},body:JSON.stringify(s)})).status,403);assert.equal((await fetch(url+'/api/ingest',{method:'POST',headers:{authorization:'Bearer test-secret','content-type':'application/json'},body:'x'.repeat(2*1024*1024+1)})).status,413);const assets=await fetch(url+'/');assert.equal(assets.status,200);assert.ok(assets.headers.get('content-security-policy').includes("script-src 'self'"));}finally{await new Promise(r=>server.close(r));await rm(dir,{recursive:true,force:true});}});
-test('production reader auth fails closed and separates service credentials from membership',()=>{const req=new Request('https://example.test',{headers:{'oai-authenticated-user-id':'dad'}});assert.equal(canRead(req,{}),false);assert.equal(canRead(req,{DEPLOYMENT_MODE:'sites',TRUST_SITES_DISPATCH:'true',READER_USER_IDS:'dad, ash'}),true);assert.equal(canRead(req,{DEPLOYMENT_MODE:'sites',TRUST_SITES_DISPATCH:'true',READER_USER_IDS:'other'}),false);assert.equal(canRead(new Request('https://example.test',{headers:{authorization:'Bearer service-token'}}),{DEPLOYMENT_MODE:'sites',TRUST_SITES_DISPATCH:'true',READER_USER_IDS:'dad'}),false);assert.equal(canRead(req,{DEPLOYMENT_MODE:'public-worker',TRUST_SITES_DISPATCH:'true',READER_USER_IDS:'dad'}),false);});
-test('reject invalid OHLC, future snapshots and non-finite balances',()=>{const s=fixture();s.candles.EXAMPLE[0].high=90;assert.match(validSnapshot(s),/Invalid candle/);assert.match(validSnapshot(fixture(new Date(Date.now()+3600000).toISOString())),/future/);const t=fixture();t.paper.equity=NaN;assert.match(validSnapshot(t),/finite/);});
-test('CSV export escapes embedded delimiters, quotes, line breaks and formulas',()=>{const csv=toCSV([{a:'normal,comma',b:'\n=1+1',c:'a"b',d:{x:2}}]);assert.ok(csv.includes('"normal,comma"'));assert.ok(csv.includes("'\n=1+1"));assert.ok(csv.includes('a""b'));});
+import { researchProvenance } from "../public/presentation.mjs";
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtemp, rm, readFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { createServer } from "../server.mjs";
+import { canRead, toCSV, csvCell, validSnapshot } from "../api.mjs";
+const fixture = (at = new Date(Date.now() - 60000).toISOString()) => ({
+  schema_version: 1,
+  generated_at: at,
+  last_success_at: at,
+  market: { session: at.slice(0, 10), status: "open" },
+  health: { state: "ok", expected_interval_minutes: 15 },
+  watchlist: [
+    { ticker: "EXAMPLE", company: '=HYPERLINK("https://example.invalid")' },
+  ],
+  candidates: [],
+  candles: {
+    EXAMPLE: [
+      { time: at, open: 100, high: 102, low: 99, close: 101, volume: 200 },
+    ],
+  },
+  paper: {
+    capital: 100,
+    realised_balance: 100,
+    equity: 100,
+    positions: [],
+    closed_trades: [],
+    events: [],
+  },
+  runs: [],
+  evaluation: { sample_count: 0 },
+});
+test("HTTP ingestion is authenticated, idempotent, durable and rejects stale or conflicting updates", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "ftse-dashboard-"));
+  const server = createServer({ directory: dir, token: "test-secret" });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const url = `http://127.0.0.1:${server.address().port}`;
+  const post = (body, token = "test-secret") =>
+    fetch(url + "/api/ingest", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer " + token,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+  try {
+    assert.equal(
+      (await fetch(url + "/api/snapshot").then((r) => r.json())).snapshot,
+      null,
+    );
+    assert.equal((await post(fixture(), "wrong")).status, 401);
+    const s = fixture();
+    assert.equal((await post(s)).status, 201);
+    assert.equal((await post(s)).status, 200);
+    assert.equal(
+      (await post({ ...s, evaluation: { changed: true } })).status,
+      409,
+    );
+    assert.equal(
+      (
+        await post(
+          fixture(new Date(Date.parse(s.generated_at) - 60000).toISOString()),
+        )
+      ).status,
+      409,
+    );
+    assert.equal((await post({ ...s, schema_version: 7 })).status, 422);
+    assert.equal((await fetch(url + "/api/ingest-status")).status, 401);
+    const ack = await fetch(url + "/api/ingest-status", {
+      headers: { authorization: "Bearer test-secret" },
+    }).then((r) => r.json());
+    assert.equal(ack.generated_at, s.generated_at);
+    assert.equal(Object.hasOwn(ack, "snapshot"), false);
+    const got = await fetch(url + "/api/snapshot").then((r) => r.json());
+    assert.equal(ack.revision, got.revision);
+    assert.equal(got.snapshot.generated_at, s.generated_at);
+    const disk = JSON.parse(
+      await readFile(path.join(dir, "current.json"), "utf8"),
+    );
+    assert.equal(disk.revision, got.revision);
+    const csv = await fetch(url + "/api/export?table=watchlist").then((r) =>
+      r.text(),
+    );
+    assert.ok(csv.includes("'=HYPERLINK"));
+    assert.equal((await fetch(url + "/api/export?table=secret")).status, 400);
+    assert.equal((await fetch(url + "/demo.json")).status, 404);
+    assert.equal(
+      (
+        await fetch(url + "/api/ingest", {
+          method: "POST",
+          headers: {
+            origin: "https://evil.example",
+            authorization: "Bearer test-secret",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(s),
+        })
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await fetch(url + "/api/ingest", {
+          method: "POST",
+          headers: {
+            authorization: "Bearer test-secret",
+            "content-type": "application/json",
+          },
+          body: "x".repeat(2 * 1024 * 1024 + 1),
+        })
+      ).status,
+      413,
+    );
+    const assets = await fetch(url + "/");
+    assert.equal(assets.status, 200);
+    assert.ok(
+      assets.headers
+        .get("content-security-policy")
+        .includes("script-src 'self'"),
+    );
+  } finally {
+    await new Promise((r) => server.close(r));
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+test("production reader auth fails closed and separates service credentials from membership", () => {
+  const req = new Request("https://example.test", {
+    headers: { "oai-authenticated-user-id": "dad" },
+  });
+  assert.equal(canRead(req, {}), false);
+  assert.equal(
+    canRead(req, {
+      DEPLOYMENT_MODE: "sites",
+      TRUST_SITES_DISPATCH: "true",
+      READER_USER_IDS: "dad, ash",
+    }),
+    true,
+  );
+  assert.equal(
+    canRead(req, {
+      DEPLOYMENT_MODE: "sites",
+      TRUST_SITES_DISPATCH: "true",
+      READER_USER_IDS: "other",
+    }),
+    false,
+  );
+  assert.equal(
+    canRead(
+      new Request("https://example.test", {
+        headers: { authorization: "Bearer service-token" },
+      }),
+      {
+        DEPLOYMENT_MODE: "sites",
+        TRUST_SITES_DISPATCH: "true",
+        READER_USER_IDS: "dad",
+      },
+    ),
+    false,
+  );
+  assert.equal(
+    canRead(req, {
+      DEPLOYMENT_MODE: "public-worker",
+      TRUST_SITES_DISPATCH: "true",
+      READER_USER_IDS: "dad",
+    }),
+    false,
+  );
+});
+test("reject invalid OHLC, future snapshots and non-finite balances", () => {
+  const s = fixture();
+  s.candles.EXAMPLE[0].high = 90;
+  assert.match(validSnapshot(s), /Invalid candle/);
+  assert.match(
+    validSnapshot(fixture(new Date(Date.now() + 3600000).toISOString())),
+    /future/,
+  );
+  const t = fixture();
+  t.paper.equity = NaN;
+  assert.match(validSnapshot(t), /finite/);
+});
+test("CSV export escapes embedded delimiters, quotes, line breaks and formulas", () => {
+  const csv = toCSV([
+    { a: "normal,comma", b: "\n=1+1", c: 'a"b', d: { x: 2 } },
+  ]);
+  assert.ok(csv.includes('"normal,comma"'));
+  assert.ok(csv.includes("'\n=1+1"));
+  assert.ok(csv.includes('a""b'));
+});
 
-test('accept pipeline UTC-offset timestamps and partial-collection health',()=>{const s=fixture(new Date(Date.now()-60000).toISOString().replace('Z','+00:00'));s.health.state='degraded';assert.equal(validSnapshot(s),null);s.health.state='not-collected';assert.equal(validSnapshot(s),null);s.watchlist=[null];assert.match(validSnapshot(s),/record array/);});
+test("accept pipeline UTC-offset timestamps and partial-collection health", () => {
+  const s = fixture(
+    new Date(Date.now() - 60000).toISOString().replace("Z", "+00:00"),
+  );
+  s.health.state = "degraded";
+  assert.equal(validSnapshot(s), null);
+  s.health.state = "not-collected";
+  assert.equal(validSnapshot(s), null);
+  s.watchlist = [null];
+  assert.match(validSnapshot(s), /record array/);
+});
 
-test('HTTP history preserves older snapshots and exports their own records',async()=>{const dir=await mkdtemp(path.join(os.tmpdir(),'ftse-archive-'));const server=createServer({directory:dir,token:'archive-token'});await new Promise(r=>server.listen(0,'127.0.0.1',r));const base=`http://127.0.0.1:${server.address().port}`;try{const ids=[];for(let i=0;i<3;i++){const s=fixture(new Date(Date.now()-(10-i)*60000).toISOString());s.watchlist=[{ticker:'ARCHIVE-'+i}];const r=await fetch(base+'/api/ingest',{method:'POST',headers:{authorization:'Bearer archive-token','content-type':'application/json'},body:JSON.stringify(s)}).then(r=>r.json());ids.push(r.revision);}const page=await fetch(base+'/api/history?limit=2').then(r=>r.json());assert.equal(page.revisions.length,2);assert.equal(page.revisions[0].revision,ids[2]);assert.ok(page.next_before);const older=await fetch(base+'/api/history?limit=2&before='+encodeURIComponent(page.next_before)).then(r=>r.json());assert.equal(older.revisions.length,1);assert.equal(older.revisions[0].revision,ids[0]);const archive=await fetch(base+'/api/history?revision='+ids[0]).then(r=>r.json());assert.equal(archive.snapshot.watchlist[0].ticker,'ARCHIVE-0');const csv=await fetch(base+'/api/export?table=watchlist&revision='+ids[0]).then(r=>r.text());assert.ok(csv.includes('ARCHIVE-0'));assert.equal((await fetch(base+'/api/history?revision=../../etc/passwd')).status,400);}finally{await new Promise(r=>server.close(r));await rm(dir,{recursive:true,force:true});}});
+test("HTTP history preserves older snapshots and exports their own records", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "ftse-archive-"));
+  const server = createServer({ directory: dir, token: "archive-token" });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const ids = [];
+    for (let i = 0; i < 3; i++) {
+      const s = fixture(new Date(Date.now() - (10 - i) * 60000).toISOString());
+      s.watchlist = [{ ticker: "ARCHIVE-" + i }];
+      const r = await fetch(base + "/api/ingest", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer archive-token",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(s),
+      }).then((r) => r.json());
+      ids.push(r.revision);
+    }
+    const page = await fetch(base + "/api/history?limit=2").then((r) =>
+      r.json(),
+    );
+    assert.equal(page.revisions.length, 2);
+    assert.equal(page.revisions[0].revision, ids[2]);
+    assert.ok(page.next_before);
+    const older = await fetch(
+      base +
+        "/api/history?limit=2&before=" +
+        encodeURIComponent(page.next_before),
+    ).then((r) => r.json());
+    assert.equal(older.revisions.length, 1);
+    assert.equal(older.revisions[0].revision, ids[0]);
+    const archive = await fetch(base + "/api/history?revision=" + ids[0]).then(
+      (r) => r.json(),
+    );
+    assert.equal(archive.snapshot.watchlist[0].ticker, "ARCHIVE-0");
+    const csv = await fetch(
+      base + "/api/export?table=watchlist&revision=" + ids[0],
+    ).then((r) => r.text());
+    assert.ok(csv.includes("ARCHIVE-0"));
+    assert.equal(
+      (await fetch(base + "/api/history?revision=../../etc/passwd")).status,
+      400,
+    );
+  } finally {
+    await new Promise((r) => server.close(r));
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
-test('CSV preserves negative numeric values while neutralising formula strings',()=>{assert.equal(csvCell(-12.5),'"-12.5"');assert.equal(csvCell('-12.5'),'"\'-12.5"');assert.equal(csvCell('=SUM(A1:A3)'),'"\'=SUM(A1:A3)"');assert.ok(toCSV([{pnl:-8.25,reason:'-formula'}]).includes('"-8.25","\'-formula"'));});
-test('reject malformed nested display values before they can break rendering',()=>{for(const bad of [{ticker:{toString:'broken'}},{ticker:'EXA',company:{toString:'broken'}},{ticker:'EXA',previous_change_pct:'5.0'}]){const s=fixture();s.watchlist=[bad];assert.match(validSnapshot(s),/display fields/);}const s=fixture();s.market.status={toString:'broken'};assert.match(validSnapshot(s),/display fields/);});
+test("CSV preserves negative numeric values while neutralising formula strings", () => {
+  assert.equal(csvCell(-12.5), '"-12.5"');
+  assert.equal(csvCell("-12.5"), '"\'-12.5"');
+  assert.equal(csvCell("=SUM(A1:A3)"), '"\'=SUM(A1:A3)"');
+  assert.ok(
+    toCSV([{ pnl: -8.25, reason: "-formula" }]).includes(
+      '"-8.25","\'-formula"',
+    ),
+  );
+});
+test("reject malformed nested display values before they can break rendering", () => {
+  for (const bad of [
+    { ticker: { toString: "broken" } },
+    { ticker: "EXA", company: { toString: "broken" } },
+    { ticker: "EXA", previous_change_pct: "5.0" },
+  ]) {
+    const s = fixture();
+    s.watchlist = [bad];
+    assert.match(validSnapshot(s), /display fields/);
+  }
+  const s = fixture();
+  s.market.status = { toString: "broken" };
+  assert.match(validSnapshot(s), /display fields/);
+});
 
-test('synthetic provenance follows API and archived data without relying on URL flags',()=>{const synthetic={mode:'synthetic-demo',paper:{realised_balance:1000.91}};assert.equal(researchProvenance(synthetic).synthetic,true);assert.match(researchProvenance(synthetic).banner,/not observed market performance/);assert.equal(researchProvenance({mode:'paper'}).synthetic,false);assert.equal(researchProvenance(null,true).synthetic,true);const archived=JSON.parse(JSON.stringify(synthetic));assert.equal(researchProvenance(archived).synthetic,true);assert.equal(researchProvenance(null).synthetic,false);});
+test("synthetic provenance follows API and archived data without relying on URL flags", () => {
+  const synthetic = {
+    mode: "synthetic-demo",
+    paper: { realised_balance: 1000.91 },
+  };
+  assert.equal(researchProvenance(synthetic).synthetic, true);
+  assert.match(
+    researchProvenance(synthetic).banner,
+    /not observed market performance/,
+  );
+  assert.equal(researchProvenance({ mode: "paper" }).synthetic, false);
+  assert.equal(researchProvenance(null, true).synthetic, true);
+  const archived = JSON.parse(JSON.stringify(synthetic));
+  assert.equal(researchProvenance(archived).synthetic, true);
+  assert.equal(researchProvenance(null).synthetic, false);
+});
 
-test('legacy CSV retains source fields without mixing them into corrected paper results',async()=>{const dir=await mkdtemp(path.join(os.tmpdir(),'ftse-legacy-'));const server=createServer({directory:dir,token:'legacy-token'});await new Promise(r=>server.listen(0,'127.0.0.1',r));const base=`http://127.0.0.1:${server.address().port}`;try{const s=fixture();s.legacy={label:'Historical scanner records; old simulation unverified',counts:{'original.csv':1},records:[{source:'original.csv',validation:'legacy-unverified',ticker:'OLD',original_pnl:'=1+1'}]};const r=await fetch(base+'/api/ingest',{method:'POST',headers:{authorization:'Bearer legacy-token','content-type':'application/json'},body:JSON.stringify(s)});assert.equal(r.status,201);const csv=await fetch(base+'/api/export?table=legacy').then(r=>r.text());assert.ok(csv.includes('original.csv'));assert.ok(csv.includes('legacy-unverified'));assert.ok(csv.includes("'=1+1"));const current=await fetch(base+'/api/snapshot').then(r=>r.json());assert.equal(current.snapshot.paper.closed_trades.length,0);assert.equal(current.snapshot.legacy.records.length,1);s.legacy.records=[null];assert.match(validSnapshot(s),/legacy record/);}finally{await new Promise(r=>server.close(r));await rm(dir,{recursive:true,force:true});}});
+test("legacy CSV retains source fields without mixing them into corrected paper results", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "ftse-legacy-"));
+  const server = createServer({ directory: dir, token: "legacy-token" });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const s = fixture();
+    s.legacy = {
+      label: "Historical scanner records; old simulation unverified",
+      counts: { "original.csv": 1 },
+      records: [
+        {
+          source: "original.csv",
+          validation: "legacy-unverified",
+          ticker: "OLD",
+          original_pnl: "=1+1",
+        },
+      ],
+    };
+    const r = await fetch(base + "/api/ingest", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer legacy-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(s),
+    });
+    assert.equal(r.status, 201);
+    const csv = await fetch(base + "/api/export?table=legacy").then((r) =>
+      r.text(),
+    );
+    assert.ok(csv.includes("original.csv"));
+    assert.ok(csv.includes("legacy-unverified"));
+    assert.ok(csv.includes("'=1+1"));
+    const current = await fetch(base + "/api/snapshot").then((r) => r.json());
+    assert.equal(current.snapshot.paper.closed_trades.length, 0);
+    assert.equal(current.snapshot.legacy.records.length, 1);
+    s.legacy.records = [null];
+    assert.match(validSnapshot(s), /legacy record/);
+  } finally {
+    await new Promise((r) => server.close(r));
+    await rm(dir, { recursive: true, force: true });
+  }
+});

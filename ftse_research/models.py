@@ -1,4 +1,5 @@
 """Explicit time, price and virtual-risk contracts for research records."""
+
 from dataclasses import dataclass, asdict, fields
 from datetime import datetime
 from hashlib import sha256
@@ -30,6 +31,7 @@ def serialise(value):
 @dataclass(frozen=True)
 class ResearchConfig:
     """Illustrative virtual defaults, explicitly unapproved for real money."""
+
     capital: float = 1000.0
     position_size: float = 100.0
     max_positions: int = 3
@@ -51,19 +53,40 @@ class ResearchConfig:
     mode: str = "paper"
 
     def __post_init__(self):
-        positive = ("capital", "position_size", "max_positions", "interval_minutes", "history_days",
-                    "max_data_lag_minutes", "signal_expiry_minutes", "minimum_pilot_sessions",
-                    "minimum_pilot_closed_trades")
+        positive = (
+            "capital",
+            "position_size",
+            "max_positions",
+            "interval_minutes",
+            "history_days",
+            "max_data_lag_minutes",
+            "signal_expiry_minutes",
+            "minimum_pilot_sessions",
+            "minimum_pilot_closed_trades",
+        )
         for field in positive:
             if not math.isfinite(float(getattr(self, field))) or getattr(self, field) <= 0:
                 raise ValueError(f"{field} must be positive")
-        for field in ("daily_loss_limit_pct", "mover_threshold_pct", "spread_bps",
-                      "slippage_bps", "commission_per_side", "stamp_duty_pct", "maximum_pilot_drawdown_pct"):
+        for field in (
+            "daily_loss_limit_pct",
+            "mover_threshold_pct",
+            "spread_bps",
+            "slippage_bps",
+            "commission_per_side",
+            "stamp_duty_pct",
+            "maximum_pilot_drawdown_pct",
+        ):
             if not math.isfinite(float(getattr(self, field))) or getattr(self, field) < 0:
                 raise ValueError(f"{field} must be non-negative")
         if self.position_size > self.capital:
             raise ValueError("Virtual position size cannot exceed initial capital")
-        for field in ("max_positions", "interval_minutes", "history_days", "minimum_pilot_sessions", "minimum_pilot_closed_trades"):
+        for field in (
+            "max_positions",
+            "interval_minutes",
+            "history_days",
+            "minimum_pilot_sessions",
+            "minimum_pilot_closed_trades",
+        ):
             if not isinstance(getattr(self, field), int) or isinstance(getattr(self, field), bool):
                 raise ValueError(f"{field} must be a whole number")
         for field in ("allow_synthetic_shorts", "allow_same_session_reentry"):
@@ -156,8 +179,13 @@ class Signal:
             raise ValueError("Explicit sterling quote units required")
         if stamp(self.available_at) < stamp(self.signal_at):
             raise ValueError("Signal cannot be available before its source candle closes")
-        if not all(math.isfinite(float(value)) and value > 0 for value in (self.stop, self.target, self.reference_price)):
+        if not all(
+            math.isfinite(float(value)) and value > 0 for value in (self.stop, self.target, self.reference_price)
+        ):
             raise ValueError("Signal prices must be finite and positive")
-        if not (self.stop < self.reference_price < self.target if self.direction == "Long"
-                else self.target < self.reference_price < self.stop):
+        if not (
+            self.stop < self.reference_price < self.target
+            if self.direction == "Long"
+            else self.target < self.reference_price < self.stop
+        ):
             raise ValueError("Signal stop/target have invalid direction")

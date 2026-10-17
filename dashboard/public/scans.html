@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>FTSE Research | Collected scans</title>
+    <link rel="stylesheet" href="/scans.css" />
+    <script type="module" src="/scans.js"></script>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <header>
+      <a class="brand" href="/">FTSE <strong>Research</strong></a
+      ><span>Private scanner archive</span
+      ><a href="/demo?demo=1">Explore the fictional demo ↗</a>
+    </header>
+    <main id="main">
+      <div class="heading">
+        <div>
+          <p class="eyebrow">YOUR SCANNER’S ACTUAL RECORDS</p>
+          <h1>Collected scans</h1>
+          <p>
+            See what the existing scan jobs found. No live orders or simulated
+            profits are included here.
+          </p>
+        </div>
+        <button id="refresh" type="button">Refresh</button>
+      </div>
+      <p id="message" role="status" aria-live="polite">
+        Loading your collected scans…
+      </p>
+      <section id="content" hidden>
+        <div id="health" class="notice"></div>
+        <div class="cards" id="summary"></div>
+        <section class="panel">
+          <h2>Explore a scan</h2>
+          <label for="run">Scan run</label
+          ><select id="run"></select>
+          <p id="run-detail"></p>
+          <div class="filters">
+            <label
+              >Search company or ticker<input
+                id="search"
+                type="search"
+                placeholder="e.g. Barclays or BARC" /></label
+            ><label
+              >Direction<select id="direction">
+                <option value="">All directions</option>
+                <option>LONG</option>
+                <option>SHORT</option>
+              </select></label
+            >
+          </div>
+          <p id="matches" role="status"></p>
+          <div class="table-wrap">
+            <table>
+              <caption class="sr">
+                Setups recorded in the selected scan
+              </caption>
+              <thead>
+                <tr>
+                  <th>Company / share</th>
+                  <th>Setup</th>
+                  <th>Direction</th>
+                  <th>Score</th>
+                  <th>Entry level</th>
+                  <th>Stop level</th>
+                  <th>Target level</th>
+                </tr>
+              </thead>
+              <tbody id="setups"></tbody>
+            </table>
+          </div>
+          <p class="muted">
+            Price levels are exactly as stored by the scanner. The CSVs do not
+            declare currency units. These are setup levels, not current quotes.
+          </p>
+        </section>
+        <section class="panel">
+          <h2>Where these records came from</h2>
+          <dl id="provenance"></dl>
+          <p id="upstream"></p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Source file</th>
+                  <th>Rows shown</th>
+                  <th>Total archived</th>
+                  <th>Meaning</th>
+                </tr>
+              </thead>
+              <tbody id="coverage"></tbody>
+            </table>
+          </div>
+          <p class="muted">
+            The page checks for new publications every minute while open.
+            Publication happens after the existing GitHub scan jobs finish, once
+            the publisher PR is merged. It does not change when scans run.
+          </p>
+        </section>
+        <details class="panel">
+          <summary>Scanner outcomes and downloads</summary>
+          <p>
+            Old scanner outcomes have not been validated as trading performance.
+            They are kept separate from corrected paper-trading results. A
+            recorded fill or profit is not evidence that a real trade could have
+            achieved it.
+          </p>
+          <div class="downloads">
+            <a href="/api/scans/export?table=runs">Download scan runs</a
+            ><a href="/api/scans/export?table=setups"
+              >Download recorded setups</a
+            ><a href="/api/scans/export?table=outcomes"
+              >Download scanner outcomes</a
+            >
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Day</th>
+                  <th>Share</th>
+                  <th>Direction</th>
+                  <th>Horizon</th>
+                  <th>Status</th>
+                  <th>Recorded outcome</th>
+                  <th>Source</th>
+                </tr>
+              </thead>
+              <tbody id="outcomes"></tbody>
+            </table>
+          </div>
+          <p class="muted">
+            Showing the latest 100 included outcome records. Downloads contain
+            all included records; source coverage above shows any archive
+            limits. Candle charts, decision journals and a corrected paper
+            ledger cannot be reconstructed from these setup CSVs.
+          </p>
+        </details>
+      </section>
+      <footer>
+        Real scanner archive · Research only ·
+        <a href="/demo?demo=1">Fictional demo and replay are separate</a>
+      </footer>
+    </main>
+  </body>
+</html>

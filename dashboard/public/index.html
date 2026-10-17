@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      name="description"
+      content="Private FTSE opening-watch and paper-trading research dashboard."
+    />
+    <title>FTSE Research | Opening watch</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <header>
+      <a class="brand" href="#watch"
+        ><span class="brand-mark" aria-hidden="true">F</span
+        ><span
+          >FTSE <strong>Research</strong
+          ><small>OPENING WATCH · PAPER TRADING</small></span
+        ></a
+      >
+      <div class="header-note">Research only<span>No live orders</span></div>
+    </header>
+    <div id="demo-banner" class="demo" hidden>
+      DEMONSTRATION DATA · Fictional prices and trades. This is a local
+      interface example, not observed market performance.
+    </div>
+    <div class="shell">
+      <aside>
+        <div class="nav-label">WORKSPACE</div>
+        <nav aria-label="Main navigation">
+          <a href="#watch" data-view="watch">Morning watch</a
+          ><a href="#detail" data-view="detail">Share detail</a
+          ><a href="#portfolio" data-view="portfolio">Paper portfolio</a
+          ><a href="#history" data-view="history">History &amp; exports</a>
+        </nav>
+        <div class="aside-note">
+          <span class="dot"></span> Paper research environment
+          <p>Yesterday’s movers. Today’s evidence. Every decision recorded.</p>
+        </div>
+      </aside>
+      <main id="main" tabindex="-1">
+        <div class="title-row">
+          <div>
+            <div class="eyebrow" id="session-label">FTSE RESEARCH</div>
+            <h1 id="page-title">Morning watch</h1>
+            <p id="page-description">
+              Follow yesterday’s biggest movers from the opening bell.
+            </p>
+          </div>
+          <button id="refresh" type="button">↻ Refresh</button>
+        </div>
+        <section
+          aria-label="Data status"
+          id="data-status"
+          tabindex="-1"
+          class="status"
+          role="status"
+          aria-live="polite"
+        >
+          Waiting for the first data update.
+        </section>
+        <button id="return-latest" type="button" hidden>
+          Return to latest snapshot
+        </button>
+        <p id="coverage-note" class="muted"></p>
+        <section id="watch-view" class="view">
+          <div class="metrics" id="watch-metrics"></div>
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Yesterday’s movers, today’s direction</h2>
+                <p>
+                  A large previous move is a research filter, not a prediction.
+                </p>
+              </div>
+              <label class="search"
+                >Find a share<input
+                  id="watch-search"
+                  type="search"
+                  placeholder="Company or ticker"
+              /></label>
+            </div>
+            <div class="filters">
+              <label
+                >Direction<select id="direction-filter">
+                  <option value="all">Qualifying movers</option>
+                  <option value="universe">All tracked shares</option>
+                  <option value="rise">Previous risers</option>
+                  <option value="fall">Previous fallers</option>
+                </select></label
+              ><label
+                >Today’s evidence<select id="status-filter">
+                  <option value="all">All statuses</option>
+                  <option value="reversal">Reversal</option>
+                  <option value="continuation">Continuation</option>
+                  <option value="undecided">Undecided</option>
+                  <option value="unavailable">Unavailable</option>
+                </select></label
+              >
+            </div>
+            <div id="watch-table"></div>
+          </div>
+          <div class="two-col">
+            <section class="panel">
+              <h2>Qualifying setups</h2>
+              <p>Availability and entry timing remain distinct.</p>
+              <div id="candidates"></div>
+            </section>
+            <section class="panel">
+              <h2>How to read this watch</h2>
+              <ol class="guide">
+                <li>
+                  <strong>Yesterday:</strong> the completed trading session’s
+                  close-to-close move.
+                </li>
+                <li>
+                  <strong>Today:</strong> completed candles show continuation,
+                  reversal or uncertainty.
+                </li>
+                <li>
+                  <strong>Paper only:</strong> a qualifying setup can enter only
+                  after it becomes available.
+                </li>
+              </ol>
+              <p class="muted">
+                The first complete fifteen-minute candle is available after
+                08:15 London time, plus collection delay.
+              </p>
+            </section>
+          </div>
+        </section>
+        <section id="detail-view" class="view" hidden>
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2 id="share-title">Share detail</h2>
+                <p id="share-subtitle">
+                  Select a share to inspect its evidence.
+                </p>
+              </div>
+              <label
+                >Share<select id="share-select">
+                  <option value="">Choose a share</option>
+                </select></label
+              >
+            </div>
+            <div id="chart" class="chart"></div>
+            <div class="legend">
+              <span><i class="up"></i>Rising candle</span
+              ><span><i class="down"></i>Falling candle</span
+              ><span>Dashed: previous close / opening price</span
+              ><span>Coloured levels: setup entry / stop / target</span>
+            </div>
+            <div id="share-facts" class="metrics compact"></div>
+            <details>
+              <summary>Inspect exact candle records</summary>
+              <div id="candle-table"></div>
+            </details>
+            <details>
+              <summary>Inspect setup records</summary>
+              <pre id="share-records"></pre>
+            </details>
+          </div>
+        </section>
+        <section id="portfolio-view" class="view" hidden>
+          <div class="metrics" id="paper-metrics"></div>
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Paper positions</h2>
+                <p>
+                  Simulated exposure and estimated costs. No broker connection.
+                </p>
+              </div>
+              <a class="button-link" href="/api/export?table=positions"
+                >Export positions</a
+              >
+            </div>
+            <div id="positions"></div>
+          </section>
+          <section class="panel">
+            <h2>Closed paper trades</h2>
+            <div id="closed-trades"></div>
+          </section>
+          <section class="panel">
+            <h2>Evidence before conclusions</h2>
+            <p>
+              Aim: evaluate the strategy after costs. A 1% daily return is an
+              aspiration, never a guaranteed return or an entry requirement.
+            </p>
+            <div id="evaluation"></div>
+          </section>
+        </section>
+        <section id="history-view" class="view" hidden>
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Snapshot archive</h2>
+                <p>
+                  Open an immutable earlier snapshot. Automatic refresh pauses
+                  while viewing the archive.
+                </p>
+              </div>
+              <button id="load-archives" type="button">
+                Load saved snapshots
+              </button>
+            </div>
+            <div id="archives"></div>
+            <button id="more-archives" type="button" hidden>
+              Older snapshots
+            </button>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Scan history</h2>
+                <p>Failures, empty runs and stale data remain visible.</p>
+              </div>
+              <label
+                >Search history<input
+                  id="history-search"
+                  type="search"
+                  placeholder="Status, time or message"
+              /></label>
+            </div>
+            <div id="runs"></div>
+          </section>
+          <section id="legacy-panel" class="panel" hidden>
+            <h2>Historical scanner records</h2>
+            <p class="legacy-warning">
+              Historical unverified: excluded from corrected paper results.
+              These records preserve the earlier scanner and simulation output;
+              they do not inherit the corrected model’s validation.
+            </p>
+            <p id="legacy-counts" class="muted"></p>
+            <div class="filters">
+              <label
+                >Source file<select id="legacy-source">
+                  <option value="all">All source files</option>
+                </select></label
+              ><label
+                >Search historical records<input
+                  id="legacy-search"
+                  type="search"
+                  placeholder="Ticker, date or original field"
+              /></label>
+            </div>
+            <details>
+              <summary>Inspect original historical fields</summary>
+              <div id="legacy-records"></div>
+            </details>
+            <div class="exports">
+              <a href="/api/export?table=legacy"
+                >Historical unverified records CSV</a
+              >
+            </div>
+          </section>
+          <section class="panel">
+            <h2>Complete records</h2>
+            <p>
+              CSV files retain all columns and protect spreadsheet formula
+              cells. Each export matches the snapshot being viewed. Collector
+              CLI exports provide the complete durable research journal.
+            </p>
+            <div class="exports">
+              <a href="/api/export?table=watchlist">Watchlist CSV</a
+              ><a href="/api/export?table=candidates">Setups CSV</a
+              ><a href="/api/export?table=runs">Scan history CSV</a
+              ><a href="/api/export?table=closed_trades">Closed trades CSV</a
+              ><a href="/api/export?table=events">Paper decisions CSV</a>
+            </div>
+            <details>
+              <summary>Inspect complete snapshot</summary>
+              <pre id="raw-snapshot"></pre>
+            </details>
+          </section>
+        </section>
+        <footer>
+          Prices and times are evidence, not assurances. No financial
+          transactions are supported by this dashboard.
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>

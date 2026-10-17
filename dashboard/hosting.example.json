@@ -1,0 +1,5 @@
+{
+  "project_id": "REPLACE_WITH_REGISTERED_PRIVATE_SITE_ID",
+  "d1": { "binding": "DB", "migrations_dir": "migrations" },
+  "r2": null
+}

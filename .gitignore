@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+!.env.example
+runtime/
+*.sqlite
+*.sqlite-*
+node_modules/
+.wrangler/
+dashboard/.local-data/
+dashboard/dist/
+.DS_Store
+coverage/

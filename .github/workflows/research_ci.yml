@@ -1,0 +1,26 @@
+name: Research checks
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offline-checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: pip install -r requirements.txt
+      - run: python -m unittest discover -s tests -v
+      - run: node --test dashboard/tests/*.test.mjs
+      - name: Exercise offline pipeline
+        run: |
+          python ftse_research_cli.py demo --database /tmp/ftse-demo.sqlite --out /tmp/ftse-snapshot.json
+          python ftse_research_cli.py evaluate --database /tmp/ftse-demo.sqlite

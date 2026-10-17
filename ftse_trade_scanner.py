@@ -14,6 +14,8 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from ftse_sessions import is_session, session_open_close
+
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -139,19 +141,23 @@ def interval_minutes(interval: str) -> int | None:
     return number if unit == "m" else number * 60 if unit == "h" else None
 
 
-def completed_candles(df: pd.DataFrame, interval: str) -> pd.DataFrame:
-    """Drop the final candle only if it is still forming.
+def completed_candles(df: pd.DataFrame, interval: str, now: pd.Timestamp | None = None) -> pd.DataFrame:
+    """Return completed bars in market time, including single-bar downloads.
 
-    Dropping it unconditionally throws away a finished candle whenever the
-    scan runs after the market has closed."""
+    A naive provider index is explicitly interpreted as London market time.
+    Historical bars are retained; forming/future bars are never observations.
+    """
+    result = df.copy()
+    result.index = pd.DatetimeIndex(result.index)
+    result.index = (result.index.tz_localize(UK_TZ) if result.index.tz is None
+                    else result.index.tz_convert(UK_TZ))
+    result = result[~result.index.duplicated(keep="last")].sort_index()
     minutes = interval_minutes(interval)
-    if minutes is None or len(df) < 2:
-        return df.copy()
-    last_start = df.index[-1]
-    now = pd.Timestamp.now(tz=last_start.tz) if last_start.tzinfo else pd.Timestamp.now()
-    if last_start + pd.Timedelta(minutes=minutes) > now:
-        return df.iloc[:-1].copy()
-    return df.copy()
+    if minutes is None:
+        return result
+    now = pd.Timestamp.now(tz=UK_TZ) if now is None else pd.Timestamp(now)
+    now = now.tz_localize(UK_TZ) if now.tzinfo is None else now.tz_convert(UK_TZ)
+    return result[result.index + pd.Timedelta(minutes=minutes) <= now].copy()
 
 
 def candle_lag_minutes(df: pd.DataFrame, interval: str) -> float | None:
@@ -168,9 +174,12 @@ def candle_lag_minutes(df: pd.DataFrame, interval: str) -> float | None:
 
 
 def market_open_now() -> bool:
-    """Roughly 08:05-16:25 UK on weekdays (does not know about bank holidays)."""
-    now = datetime.now(UK_TZ)
-    return now.weekday() < 5 and (8, 5) <= (now.hour, now.minute) <= (16, 25)
+    """Use actual London exchange hours, holidays and shortened sessions."""
+    now = pd.Timestamp.now(tz=UK_TZ)
+    if not is_session(now):
+        return False
+    opening, closing = session_open_close(now)
+    return opening <= now < closing
 
 
 def describe_data_lag(lags: list[float]) -> str:
@@ -193,8 +202,9 @@ def describe_data_lag(lags: list[float]) -> str:
 def drop_untraded_bars(df: pd.DataFrame) -> pd.DataFrame:
     """Remove zero-volume candles (no trades). Illiquid names print flat
     placeholder bars that otherwise create fake swing highs/lows."""
-    if "volume" in df.columns and (df["volume"] > 0).any():
-        return df[df["volume"] > 0].copy()
+    if "volume" in df.columns:
+        volume = pd.to_numeric(df["volume"], errors="coerce")
+        return df[volume > 0].copy()
     return df
 
 

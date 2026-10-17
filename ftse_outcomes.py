@@ -9,18 +9,20 @@ What it does
   1. Walks each logged setup forward through the candles that followed it:
      did price reach the target or the stop first, or neither?
   2. Imagines a trader who takes the top 1 or 2 ideas each day and shows how
-     those paper trades performed over time (equity curve, drawdown).
+     those paper trades performed over time (realised balance and drawdown).
   3. Compares those picks with the average of EVERY idea the scanner flagged
      (a random pick). If the top-ranked ideas are not better than that
      average, the ranking is not adding value.
 
 Run it once a day after the close (Yahoo only keeps about 60 days of 15-minute
-candles, so results are cached in scan_data/outcomes.csv as they are resolved):
+candles, so corrected results are cached in scan_data/outcomes.v2.csv):
 
     python ftse_outcomes.py
 
 Assumptions (also written into the workbook's Summary sheet)
-  * You act on the scan, filling at the OPEN of the next 15-minute candle.
+  * Fill at the first candle OPEN on or after actual scan availability.
+  * Require completed contiguous bars; missing coverage stays unresolved.
+  * Legacy outcomes.csv is preserved; corrected results use outcomes.v2.csv.
   * If the stop and target both fall inside one candle, the stop is assumed
     to have been hit first (pessimistic).
   * Gaps through a stop fill at the open, so a loss can exceed 1R.
@@ -35,10 +37,9 @@ import math
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, time as dtime
+from datetime import datetime
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.chart import LineChart, Reference
@@ -46,11 +47,15 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 import ftse_trade_scanner as sc
+from ftse_sessions import is_session, session_open_close, sessions_from
 
 SCRIPT_DIR = Path(__file__).parent
 DEFAULT_OUT = SCRIPT_DIR / "ftse_outcomes.xlsx"
 OUTCOME_COLUMNS = ["key", "day", "ticker", "direction", "horizon", "status", "outcome", "fill",
                    "exit_price", "exit_time", "r_gross", "fill_risk_pct", "ambiguous"]
+SIMULATION_VERSION = "availability-session-v2"
+CACHE_FILENAME = "outcomes.v2.csv"
+
 PICK_SCENARIOS = ["Top 1 per day", "Top 2 per day", "Top 2 per day, persistent"]
 POOL = "Pool average (every first sighting)"
 
@@ -74,51 +79,88 @@ class Sim:
 MAX_FILL_DELAY = pd.Timedelta(minutes=30)   # no trade within this long of the signal = not filled
 
 
-def simulate(side: str, stop: float, target: float, signal_close: pd.Timestamp,
-             data: pd.DataFrame, horizon: int, now: pd.Timestamp) -> Sim:
-    """Walk one setup forward. `signal_close` is when the signal candle closed;
-    the fill is the open of the first candle that starts at or after it."""
-    after = data[data.index >= signal_close]
-    if after.empty:
-        return Sim("pending") if (now - signal_close) < pd.Timedelta(days=4) else Sim("nodata", "no_candle")
-    signal_day = signal_close.tz_convert(sc.UK_TZ).date()
-    if after.index[0].date() != signal_day or after.index[0] - signal_close > MAX_FILL_DELAY:
-        return Sim("skipped", "no_candle")          # a thin share that didn't trade again soon: you couldn't have filled
-    days = sorted(set(after.index.date))
-    if len(days) < horizon:
-        stuck = (now - signal_close) > pd.Timedelta(days=horizon * 3 + 4)
-        return Sim("nodata", "no_candle") if stuck else Sim("pending")
-    horizon_day = days[horizon - 1]
-    last_start = after.index[after.index.date == horizon_day][-1]
-    day_over = (len(days) > horizon or last_start.time() >= dtime(16, 0)
-                or now >= pd.Timestamp(f"{horizon_day} 16:45", tz=sc.UK_TZ))
-    if not day_over:
-        return Sim("pending")
+def market_stamp(value) -> pd.Timestamp:
+    stamp = pd.Timestamp(value)
+    return stamp.tz_localize(sc.UK_TZ) if stamp.tzinfo is None else stamp.tz_convert(sc.UK_TZ)
 
-    path = after[after.index.date <= horizon_day]
-    fill = float(path["open"].iloc[0])
+
+def simulate(side: str, stop: float, target: float, signal_close: pd.Timestamp,
+             data: pd.DataFrame, horizon: int, now: pd.Timestamp, interval: str = "15m") -> Sim:
+    """Conservative completed-bar simulation from actual signal availability.
+
+    `signal_close` is the later of the signal candle close and scan availability.
+    Intrabar outcomes become observable at bar close. Gaps in the path keep the
+    outcome unresolved: a later candle cannot establish what happened earlier.
+    """
+    available, now = market_stamp(signal_close), market_stamp(now)
+    minutes = sc.interval_minutes(interval)
+    if minutes is None or minutes <= 0 or horizon < 1 or side not in {"Long", "Short"}:
+        raise ValueError("Use a positive intraday interval, horizon and valid direction")
+    if not all(math.isfinite(float(v)) and float(v) > 0 for v in (stop, target)):
+        return Sim("skipped", "invalid_levels")
+    if (side == "Long" and stop >= target) or (side == "Short" and stop <= target):
+        return Sim("skipped", "invalid_levels")
+    if not is_session(available):
+        return Sim("skipped", "outside_session")
+    opening, closing = session_open_close(available)
+    if available < opening or available >= closing:
+        return Sim("skipped", "outside_session")
+    step = pd.Timedelta(minutes=minutes)
+    # Anchor intervals to this exchange session, not midnight or a UTC offset.
+    expected_fill = opening + math.ceil((available - opening) / step) * step
+    if expected_fill >= closing:
+        return Sim("skipped", "no_candle")
+    complete = sc.drop_untraded_bars(sc.completed_candles(data, interval, now))
+    after = complete[complete.index >= expected_fill]
+    expired = now - available > pd.Timedelta(days=max(10, horizon * 3 + 4))
+    missing = Sim("nodata", "missing_coverage") if expired else Sim("pending", "missing_coverage")
+    if after.empty:
+        return missing
+    first = after.index[0]
+    if first.date() != available.date() or first - available > MAX_FILL_DELAY:
+        return Sim("skipped", "no_candle")
+    # Unknown bars immediately before a fill cannot establish whether the setup
+    # was still valid, so do not retrospectively fill at a later observed price.
+    if first != expected_fill:
+        return missing
+    fill = float(after["open"].iloc[0])
+    if not math.isfinite(fill) or fill <= 0:
+        return missing
     if (side == "Long" and (fill <= stop or fill >= target)) or (side == "Short" and (fill >= stop or fill <= target)):
         return Sim("skipped", "gap", fill=fill)
     risk = abs(fill - stop)
-    risk_pct = round(risk / fill * 100, 3)
+    risk_pct = risk / fill * 100
 
-    def r_multiple(exit_price: float) -> float:
-        return round(((exit_price - fill) if side == "Long" else (fill - exit_price)) / risk, 3)
+    def r_multiple(price):
+        return round(((price - fill) if side == "Long" else (fill - price)) / risk, 6)
 
-    ambiguous = False
-    for stamp, row in path.iterrows():
-        o, h, l = float(row["open"]), float(row["high"]), float(row["low"])
-        hit_stop, hit_target = (l <= stop, h >= target) if side == "Long" else (h >= stop, l <= target)
-        if hit_stop and hit_target:
-            ambiguous, hit_target = True, False     # cannot know the order: assume the stop came first
-        if hit_stop:
-            exit_price = min(o, stop) if side == "Long" else max(o, stop)
-            return Sim("done", "stop", fill, exit_price, stamp.isoformat(), r_multiple(exit_price), risk_pct, ambiguous)
-        if hit_target:
-            exit_price = max(o, target) if side == "Long" else min(o, target)
-            return Sim("done", "target", fill, exit_price, stamp.isoformat(), r_multiple(exit_price), risk_pct, ambiguous)
-    close = float(path["close"].iloc[-1])
-    return Sim("done", "timeout", fill, close, path.index[-1].isoformat(), r_multiple(close), risk_pct, False)
+    final_close = closing
+    last_row, last_end = None, None
+    for day in sessions_from(available, horizon):
+        day_open, day_close = session_open_close(day)
+        start = first if day.date() == first.date() else day_open
+        for stamp in pd.date_range(start, day_close, freq=step, inclusive="left"):
+            bar_end = min(stamp + step, day_close)
+            if bar_end > now or stamp not in complete.index:
+                return missing
+            row = complete.loc[stamp]
+            o, h, l, close = (float(row[c]) for c in ("open", "high", "low", "close"))
+            if not all(math.isfinite(v) and v > 0 for v in (o, h, l, close)) or l > min(o, close) or h < max(o, close):
+                return missing
+            hit_stop, hit_target = (l <= stop, h >= target) if side == "Long" else (h >= stop, l <= target)
+            ambiguous = hit_stop and hit_target
+            if hit_stop:
+                price = min(o, stop) if side == "Long" else max(o, stop)
+                return Sim("done", "stop", fill, price, bar_end.isoformat(), r_multiple(price), risk_pct, ambiguous)
+            if hit_target:
+                price = max(o, target) if side == "Long" else min(o, target)
+                return Sim("done", "target", fill, price, bar_end.isoformat(), r_multiple(price), risk_pct, False)
+            last_row, last_end = row, bar_end
+        final_close = day_close
+    if now < final_close or last_row is None:
+        return missing
+    price = float(last_row["close"])
+    return Sim("done", "timeout", fill, price, last_end.isoformat(), r_multiple(price), risk_pct, False)
 
 
 # ----------------------------------------------------------------------
@@ -131,43 +173,55 @@ def load_candidates(data_dir: Path, last_entry: str) -> pd.DataFrame:
     if setups.empty:
         return setups
     keep = setups[(~setups["conflict"]) & (setups["as_of"] <= last_entry)].copy()
-    # the same candle can be logged by a full scan and a watch scan: keep one, preferring the full scan
-    keep["_order"] = (keep["mode"] != "full").astype(int)
-    keep = keep.sort_values(["data_time", "ticker", "direction", "_order"])
-    keep = keep.drop_duplicates(["data_time", "ticker", "direction"]).drop(columns="_order")
-    keep["key"] = keep["data_time"] + "|" + keep["ticker"] + "|" + keep["direction"]
+    # Missing availability must never turn into a backdated executable signal.
+    keep["_available"] = keep["run_time"].map(lambda v: market_stamp(v) if str(v).strip() else pd.NaT)
+    keep = keep[keep["_available"].notna()].copy()
+    before_cutoff = [stamp.strftime("%H:%M:%S") <= last_entry + ":00" and stamp.date().isoformat() == str(day)
+                     for stamp, day in zip(keep["_available"], keep["day"])]
+    keep = keep.loc[before_cutoff].copy()
+    # Retain distinct decision runs even if two runners saw the same candle.
+    keep = keep.sort_values(["_available", "ticker", "direction", "mode"])
+    keep = keep.drop_duplicates(["run_time", "mode", "data_time", "ticker", "direction"])
+    keep["key"] = (keep["data_time"] + "|" + keep["ticker"] + "|" + keep["direction"]
+                   + "|" + keep["run_time"] + "|" + keep["mode"])
+    keep = keep.drop(columns="_available")
     return keep.reset_index(drop=True)
 
 
 def first_sightings(candidates: pd.DataFrame) -> pd.DataFrame:
     """The first time each idea (share + direction) appeared on each day."""
-    ordered = candidates.sort_values(["day", "as_of", "score"], ascending=[True, True, False])
-    return ordered.drop_duplicates(["day", "ticker", "direction"], keep="first")
+    ordered = candidates.assign(_available=candidates["run_time"].map(market_stamp))
+    ordered = ordered.sort_values(["day", "_available", "score"], ascending=[True, True, False])
+    return ordered.drop_duplicates(["day", "ticker", "direction"], keep="first").drop(columns="_available")
 
 
-def build_picks(candidates: pd.DataFrame, pick_time: str) -> dict[str, pd.DataFrame]:
-    """The ideas a trader taking 1-2 trades a day would have chosen.
+def build_picks(candidates: pd.DataFrame, pick_time: str, runs: pd.DataFrame | None = None) -> dict[str, pd.DataFrame]:
+    """Choose a recorded decision run first, even when it contains no ideas.
 
-    Each day the trader looks at the first scan at or after `pick_time`, takes
-    the highest-scoring ideas, one per share. 'Persistent' additionally needs the
-    idea to have been flagged in at least two scans that day up to that moment
-    (no peeking at later scans)."""
+    Callers must supply runs; absence of a run log cannot safely establish an
+    empty decision time and therefore yields no simulated selections.
+    """
     picks = {name: [] for name in PICK_SCENARIOS}
-    for day, group in candidates.groupby("day"):
-        scans = [a for a in sorted(set(group["as_of"])) if a >= pick_time]
-        if not scans:
+    if runs is None or runs.empty or candidates.empty:
+        return {name: pd.DataFrame() for name in PICK_SCENARIOS}
+    for day, day_runs in runs.groupby("day"):
+        eligible = day_runs.assign(_available=day_runs["run_time"].map(market_stamp))
+        eligible = eligible[eligible["_available"].map(lambda t: t.date().isoformat() == str(day) and t.strftime("%H:%M:%S") >= pick_time + ":00")]
+        if eligible.empty:
             continue
-        pick_scan = scans[0]
-        seen = group[group["as_of"] <= pick_scan].groupby(["ticker", "direction"])["as_of"].nunique()
-        here = group[group["as_of"] == pick_scan].sort_values("score", ascending=False)
-        here = here.assign(seen=[int(seen.get((t, d), 1)) for t, d in zip(here["ticker"], here["direction"])])
+        decision = eligible.sort_values(["_available", "mode"]).iloc[0]
+        group = candidates[candidates["day"] == day]
+        observed = group[group["run_time"].map(market_stamp) <= decision["_available"]]
+        seen = observed.groupby(["ticker", "direction"])["run_time"].nunique()
+        here = group[(group["run_time"] == decision["run_time"]) & (group["mode"] == decision["mode"])
+                     & (group["data_time"] == decision["data_time"])].sort_values(["score", "ticker"], ascending=[False, True])
+        here = here.assign(seen=[int(seen.get((t, d), 0)) for t, d in zip(here["ticker"], here["direction"])])
         here = here.drop_duplicates("ticker")
-        for name, chosen in (("Top 1 per day", here.head(1)),
-                             ("Top 2 per day", here.head(2)),
+        for name, chosen in (("Top 1 per day", here.head(1)), ("Top 2 per day", here.head(2)),
                              ("Top 2 per day, persistent", here[here["seen"] >= 2].head(2))):
             if not chosen.empty:
                 picks[name].append(chosen.assign(rank=range(1, len(chosen) + 1)))
-    return {name: (pd.concat(parts) if parts else pd.DataFrame()) for name, parts in picks.items()}
+    return {name: pd.concat(parts) if parts else pd.DataFrame() for name, parts in picks.items()}
 
 
 # ----------------------------------------------------------------------
@@ -189,7 +243,8 @@ def evaluate_pending(rows: pd.DataFrame, cache: pd.DataFrame, horizons: list[int
                      period: str, delay: float, out_path: Path) -> tuple[int, int, int]:
     """Resolve whatever is not already cached. Returns (newly resolved, still pending, failed fetches)."""
     minutes = sc.interval_minutes(interval) or 15
-    done = set(zip(cache["key"], cache["horizon"]))
+    terminal = cache[cache["status"].isin(["done", "skipped"])]
+    done = set(zip(terminal["key"], terminal["horizon"]))
     work: dict[str, list] = {}
     for _, row in rows.iterrows():
         for horizon in horizons:
@@ -206,8 +261,9 @@ def evaluate_pending(rows: pd.DataFrame, cache: pd.DataFrame, horizons: list[int
             print(f"  could not fetch {ticker}: {error}")
             continue
         for row, horizon in items:
-            signal_close = pd.Timestamp(row["data_time"]) + pd.Timedelta(minutes=minutes)
-            sim = simulate(row["direction"], row["stop"], row["target"], signal_close, data, horizon, now)
+            signal_close = market_stamp(row["data_time"]) + pd.Timedelta(minutes=minutes)
+            available = max(signal_close, market_stamp(row["run_time"]))
+            sim = simulate(row["direction"], row["stop"], row["target"], available, data, horizon, now, interval)
             if sim.status == "pending":
                 pending += 1
                 continue
@@ -219,7 +275,14 @@ def evaluate_pending(rows: pd.DataFrame, cache: pd.DataFrame, horizons: list[int
             print(f"  ...{number}/{total} shares checked")
         time.sleep(delay)
     if new_rows:
-        sc._append_rows(out_path, OUTCOME_COLUMNS, new_rows)
+        # Replace retried missing-data records atomically, preserving the v1 file.
+        combined = (pd.concat([cache, pd.DataFrame(new_rows)], ignore_index=True)
+                    if not cache.empty else pd.DataFrame(new_rows))
+        combined = combined.drop_duplicates(["key", "horizon"], keep="last")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = out_path.with_suffix(out_path.suffix + ".tmp")
+        combined[OUTCOME_COLUMNS].to_csv(temporary, index=False)
+        temporary.replace(out_path)
     return len(new_rows), pending, failed
 
 
@@ -255,8 +318,18 @@ def drawdown(values: list[float]) -> float:
     return worst
 
 
+def realised_order(trades: pd.DataFrame) -> pd.DataFrame:
+    if trades.empty:
+        return trades
+    result = trades.copy()
+    result["_exit"] = pd.to_datetime(result["exit_time"], utc=True, errors="raise")
+    result["realised_day"] = result["_exit"].dt.tz_convert(sc.UK_TZ).dt.strftime("%Y-%m-%d")
+    return result.sort_values(["_exit", "key"] if "key" in result else ["_exit"]).drop(columns="_exit").reset_index(drop=True)
+
+
 def summarise(trades: pd.DataFrame) -> dict:
-    """Headline numbers for a set of completed trades (already ordered by time)."""
+    """Headline numbers, with realised drawdown always calculated in exit order."""
+    trades = realised_order(trades)
     n = len(trades)
     if n == 0:
         return {"n": 0}
@@ -268,7 +341,6 @@ def summarise(trades: pd.DataFrame) -> dict:
         "target_ci": (low, high), "gross": trades["r_gross"].mean(), "net": trades["r_net"].mean(),
         "net_stamp": trades["r_net_stamp"].mean(), "total_net": trades["r_net"].sum(),
         "drawdown": drawdown(trades["r_net"].tolist()),
-        "breakeven": (1 + trades["cost_r"].mean()) / 4,     # with a 3R target and a 1R stop
         "ambiguous": trades["ambiguous"].mean(),
         "net_ci": (1.96 * trades["r_net"].std() / math.sqrt(n)) if n > 1 else float("nan"),
     }
@@ -346,101 +418,158 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
         if joined.empty:
             return joined
         joined = add_costs(joined, args.cost_pct, args.stamp_duty_pct)
-        sort_cols = ["day", "as_of"] + (["rank"] if "rank" in joined.columns else [])
-        return joined.sort_values(sort_cols).reset_index(drop=True)
+        return realised_order(joined)
 
     scenarios = {name: picks[name] for name in PICK_SCENARIOS}
     scenarios[POOL] = pool
 
-    # ---------------- Summary ----------------
+    # Main results use the actual per-trade cash flows, never average R * £100.
+    def cash_flows(trades):
+        if trades.empty:
+            return pd.DataFrame(columns=["gross_gbp", "dealing_gbp", "stamp_gbp", "net_gbp"])
+        risk_gbp = args.position_gbp * trades["fill_risk_pct"] / 100
+        result = pd.DataFrame({"gross_gbp": (trades["r_gross"] * risk_gbp).round(2),
+                               "dealing_gbp": (trades["cost_r"] * risk_gbp).round(2),
+                               "stamp_gbp": (trades["stamp_r"] * risk_gbp).round(2)}, index=trades.index)
+        result["net_gbp"] = (result["gross_gbp"] - result["dealing_gbp"] - result["stamp_gbp"]).round(2)
+        return result
+
+    def coverage(frame, horizon):
+        rows = resolved(frame["key"], horizon) if not frame.empty else outcomes.iloc[:0]
+        counts = {state: int((rows["status"] == state).sum()) for state in ("done", "skipped", "nodata")}
+        counts["pending"] = len(frame) - sum(counts.values())
+        return counts
+
+    top2 = picks["Top 2 per day"]
+    main_trades = trades_for(top2, main_h) if not top2.empty else pd.DataFrame()
+    cash = cash_flows(main_trades)
+    counts = coverage(top2, main_h)
+    profits = int((cash["net_gbp"] > 1e-9).sum())
+    losses = int((cash["net_gbp"] < -1e-9).sum())
+    flat = len(main_trades) - profits - losses
     days = sorted(set(candidates["day"])) if not candidates.empty else []
-    put(summary, 1, ["FTSE scanner outcome tracker"], bold=True)
-    note_row(summary, 2, f"Generated {generated}. Scanning days with history: {len(days)}"
-                         f" ({days[0]} to {days[-1]})" if days else f"Generated {generated}. No scan history yet.")
-    pool_n = len(trades_for(pool, 1)) if not pool.empty else 0
-    note_row(summary, 3, f"Sample size: {pool_n} completed independent ideas so far. Win rates need a few hundred before they "
-                         f"mean much; with fewer than ~30, treat every number here as noise.",
-             fill=NEUTRAL if pool_n < 100 else None, bold=True)
-    note_row(summary, 4, f"1R = the money you lose if the stop is hit. Each trade is filled at the next candle's open, costs of "
-                     f"{args.cost_pct:.2f}% round trip are taken off, and if stop and target fall in one candle the stop counts first. "
-                     f"Stamp duty ({args.stamp_duty_pct:.2f}% on long entries) is shown separately: it applies to real shares, not spread bets or CFDs.")
-    note_row(summary, 5, f"Mock trader: takes the top 1 or 2 ideas from the first scan at or after {args.pick_time}. "
-                     f"'Pool average' = every idea at its first sighting of the day (what a random pick earns). "
-                     f"If the picks don't beat the pool, the ranking adds nothing.")
-    head = ["Scenario", "Hold (days)", "Trades", "Skipped", "Not resolved yet", "Target hit", "Stop hit", "Timed out",
-            "Avg R after costs", "Avg R incl. stamp duty (longs)", "+/- (95%)", "Total R after costs",
-            "Worst drawdown (R)", "Break-even target-hit rate"]
-    header(summary, 7, head)
-    summary.row_dimensions[7].height = 45
-    row = 8
-    for name, frame in scenarios.items():
-        if frame.empty:
-            continue
-        for horizon in horizons:
-            trades = trades_for(frame, horizon)
-            allrows = resolved(frame["key"], horizon)
-            skipped = int((allrows["status"] == "skipped").sum())
-            unresolved = len(frame) - len(allrows)
-            stats = summarise(trades)
-            if stats["n"] == 0:
-                put(summary, row, [name, horizon, 0, skipped, unresolved])
-            else:
-                put(summary, row, [name, horizon, stats["n"], skipped, unresolved, pct(stats["target"]),
-                                   pct(stats["stop"]), pct(stats["timeout"]), round(stats["net"], 3),
-                                   round(stats["net_stamp"], 3), round(stats["net_ci"], 3), round(stats["total_net"], 2),
-                                   round(stats["drawdown"], 2), pct(stats["breakeven"])])
-                for column in (9, 10):
-                    value = summary.cell(row, column).value
-                    fill = r_fill(value)
-                    if fill:
-                        summary.cell(row, column).fill = PatternFill("solid", fgColor=fill)
-            for column in range(2, len(head) + 1):
-                summary.cell(row, column).alignment = Alignment(horizontal="center")
+    put(summary, 1, ["FTSE paper research: main results"], bold=True)
+    note_row(summary, 2, f"Generated {generated}. Corrected simulation: {SIMULATION_VERSION}. Research only; no real orders.", last_col=8, chars_per_line=110)
+    note_row(summary, 3, f"Top 2 per day, held up to {main_h} trading day(s). £{args.position_gbp:.2f} position value per simulated trade. "
+                         f"Decision: first scan available at or after {args.pick_time}. These are recorded-history results, not a current trading shortlist.", last_col=8, chars_per_line=110)
+    main_days = main_trades["day"].nunique() if not main_trades.empty else 0
+    note_row(summary, 4, f"Evidence: {len(main_trades)} completed trades across {main_days} market day(s); pending and missing results are excluded. "
+                         "This is a descriptive sample, not proof of an edge or a forecast.", last_col=8, chars_per_line=110)
+    header(summary, 5, ["Net realised (£)", "Completed", "Profitable", "Losing", "Flat"])
+    put(summary, 6, [round(float(cash["net_gbp"].sum()), 2) if len(main_trades) or top2.empty else "Awaiting results", len(main_trades), profits, losses, flat], bold=True)
+    header(summary, 8, ["Gross P/L (£)", "Dealing costs (£)", "Stamp duty (£)", "Net realised (£)"])
+    bridge = [round(float(cash["gross_gbp"].sum()), 2), round(-float(cash["dealing_gbp"].sum()), 2),
+              round(-float(cash["stamp_gbp"].sum()), 2), round(float(cash["net_gbp"].sum()), 2)]
+    put(summary, 9, bridge if len(main_trades) or top2.empty else ["Awaiting results"] * 4)
+    header(summary, 11, ["Selected ideas", "Completed", "Skipped", "Pending", "Missing data"])
+    put(summary, 12, [len(top2), counts["done"], counts["skipped"], counts["pending"], counts["nodata"]])
+    period = f"{days[0]} to {days[-1]} ({len(days)} recorded session date(s))" if days else "No scan dates recorded"
+    note_row(summary, 14, f"Coverage: {period}. Selected ideas = completed + skipped + pending + missing data. "
+                          "Missing data is not a completed loss or a zero return; unresolved ideas are excluded from P/L.", last_col=8, chars_per_line=110)
+    note_row(summary, 15, "Profitable, losing and flat use each completed trade's net pounds after dealing costs and stamp duty. "
+                          "Target/stop/timeout labels describe price events and are not profit categories.", last_col=8, chars_per_line=110)
+    outcomes_main = main_trades["outcome"] if not main_trades.empty else pd.Series(dtype=str)
+    header(summary, 17, ["Price event", "Target", "Stop", "Timeout"])
+    put(summary, 18, ["Completed trades", int((outcomes_main == "target").sum()), int((outcomes_main == "stop").sum()), int((outcomes_main == "timeout").sum())])
+    note_row(summary, 20, "Currency components are rounded per trade to pennies, then totalled. Net realised pounds reconcile with Mock Trades and the final Daily pounds balance. "
+                          "Open positions are not valued here. Trade fills are synthetic, based on completed candle evidence; missing intervals remain unresolved.", last_col=8, chars_per_line=110)
+    note_row(summary, 22, "Use Strategy Comparison for alternative selections and holding periods. Alternatives are not additive portfolios. "
+                          "A short or profitable sample does not demonstrate an edge; same-day trades may be correlated.", last_col=8, chars_per_line=110)
+    widths(summary, [23, 20, 20, 20, 19, 3, 3, 3])
+    summary.freeze_panes = "A5"
+
+    # ---------------- Strategy comparison ----------------
+    comparison = wb.create_sheet("Strategy Comparison", 1)
+    put(comparison, 1, ["Alternative research strategies and holding periods"], bold=True)
+    note_row(comparison, 2, "Each holding-period section is a separate alternative, not an additional portfolio. Net R includes dealing costs and stamp duty on longs. "
+                            "Picks and pool use identical costs. Missing or pending results do not count as zero returns.", last_col=10, chars_per_line=140)
+    note_row(comparison, 3, "Persistent: the same share and direction appeared in at least two scans available by the exact decision run. Empty decision runs select nothing. "
+                            "Pool: each share/direction's first observation per day, a descriptive baseline rather than a matched-time causal ranking test.", last_col=10, chars_per_line=140)
+    row = 5
+    for horizon in horizons:
+        put(comparison, row, [f"Hold up to {horizon} exchange session(s): core comparison"], bold=True)
+        header(comparison, row+1, ["Scenario", "Selected", "Completed", "Pending", "Missing data", "Skipped", "Avg net R (all fees)", "Pool avg R", "Delta vs pool R", "Result status"])
+        comparison.row_dimensions[row+1].height = 36
+        row += 2
+        section = []
+        for name, frame in scenarios.items():
+            trades = trades_for(frame, horizon) if not frame.empty else pd.DataFrame()
+            other = trades_for(pool, horizon) if not pool.empty else pd.DataFrame()
+            totals = coverage(frame, horizon)
+            flow = cash_flows(trades)
+            positive = int((flow["net_gbp"] > 1e-9).sum())
+            negative = int((flow["net_gbp"] < -1e-9).sum())
+            avg = float(trades["r_net_stamp"].mean()) if len(trades) else None
+            baseline = float(other["r_net_stamp"].mean()) if len(other) else None
+            events = trades["outcome"] if len(trades) else pd.Series(dtype=str)
+            state = "Recorded completed results" if len(trades) else "Awaiting results" if len(frame) else "Not available: no ideas"
+            unavailable = "Awaiting results" if len(frame) else "Not available"
+            put(comparison, row, [name, len(frame), totals["done"], totals["pending"], totals["nodata"], totals["skipped"],
+                round(avg, 4) if avg is not None else unavailable,
+                round(baseline, 4) if baseline is not None else "Not available",
+                round(avg-baseline, 4) if avg is not None and baseline is not None else "Not available", state])
+            section.append((name,trades,flow,positive,negative,events,state,unavailable))
             row += 1
-    row += 1
-    for line in ("How to read this:",
-                 "- 'Avg R after costs' is the number that matters. Above zero, with the +/- not reaching below zero, is the bar.",
-                 "- 'Break-even target-hit rate': the share of trades that must hit the target to make money after costs.",
-                 "- Compare the top picks with the Pool average row. Prices come from Yahoo and may be delayed. Not trading advice."):
-        note_row(summary, row, line, bold=line.endswith(":"))
         row += 1
-    widths(summary, [36, 10, 9, 9, 11, 10, 9, 10, 12, 16, 10, 12, 12, 14])
-    summary.freeze_panes = "C8"
+        put(comparison, row, [f"Hold up to {horizon} session(s): supporting price events and realised cash"], bold=True)
+        header(comparison, row+1, ["Scenario", "Completed", "Target", "Stop", "Timeout", "Profitable", "Losing", "Flat", "Net realised (£)", "Realised drawdown R"])
+        comparison.row_dimensions[row+1].height = 36
+        row += 2
+        for name,trades,flow,positive,negative,events,state,unavailable in section:
+            put(comparison,row,[name,len(trades),int((events=="target").sum()),int((events=="stop").sum()),int((events=="timeout").sum()),
+                positive,negative,len(trades)-positive-negative,round(float(flow["net_gbp"].sum()),2) if len(trades) else unavailable,
+                round(drawdown(trades["r_net_stamp"].tolist()),4) if len(trades) else unavailable])
+            row += 1
+        row += 2
+    note_row(comparison, row, "There is no fixed break-even target-hit rate: fills, gaps, target payoffs, timeouts and fees vary. "
+                             "Drawdown uses realised results in exit order and excludes open-position valuation. Completed price events do not establish profitability.", last_col=10, chars_per_line=140)
+    widths(comparison, [36, 11, 12, 12, 15, 12, 22, 19, 22, 31])
+    comparison.freeze_panes = "B7"
 
     # ---------------- Breakdowns ----------------
     base = trades_for(pool, main_h) if not pool.empty else pd.DataFrame()
-    note_row(breakdown, 1, f"Every first-sighting idea, held up to {main_h} trading day(s), after costs. Slices with fewer than 30 trades are noise.", last_col=8, chars_per_line=110, bold=True)
-    row = 3
+    overall = float(base["r_net_stamp"].mean()) if not base.empty else None
+    note_row(breakdown, 1, f"Pool first observations, hold up to {main_h} exchange session(s). Net R includes dealing costs and stamp duty. "
+                            "Each section partitions the same completed pool; do not add sections together. Trades sharing market days may be correlated.", last_col=7, chars_per_line=125, bold=True)
+    row = 4
     if not base.empty:
-        base = base.assign(
-            kind=base["ticker"].map(lambda t: "Trust" if kinds.get(t) == "trust" else "Company"),
-            score_band=pd.cut(base["score"], [0, 50, 60, 70, 80, 90, 101], right=False,
+        base = base.assign(kind=base["ticker"].map(lambda t: "Trust" if kinds.get(t) == "trust" else "Company"),
+            score_band=pd.cut(base["score"], [-float("inf"), 50, 60, 70, 80, 90, float("inf")], right=False,
                               labels=["under 50", "50-60", "60-70", "70-80", "80-90", "90+"]),
-            touch_band=pd.cut(base["touches"], [0, 5, 7, 10, 10000], right=False, labels=["3-4", "5-6", "7-9", "10+"]))
-        for title, column in (("By quality score", "score_band"), ("By type", "kind"), ("By setup", "setup"),
-                              ("By direction", "direction"), ("By index", "index"), ("By meaningful touches", "touch_band")):
+            touch_band=pd.cut(base["touches"], [-float("inf"), 5, 7, 10, float("inf")], right=False,
+                              labels=["under 5", "5-6", "7-9", "10+"]))
+        for title, column in (("Quality score", "score_band"), ("Setup", "setup"), ("Direction", "direction"),
+                              ("Index", "index"), ("Meaningful touches", "touch_band"), ("Instrument type", "kind")):
+            if column == "touch_band":
+                cfg100, cfg250 = sc.INDEX_RULES["FTSE 100"], sc.INDEX_RULES["FTSE 250"]
+                note_row(breakdown,row, f"Meaningful touches: separate zone tests at least {cfg100.min_touch_gap_bars} bars apart. Price must move away by at least "
+                         f"{cfg100.rearm_move_pct*100:g}% (FTSE 100) or {cfg250.rearm_move_pct*100:g}% (FTSE 250) before a new test counts.", last_col=6, chars_per_line=120)
+                row += 2
             put(breakdown, row, [title], bold=True)
-            header(breakdown, row + 1, [column.replace("_", " ").title(), "Trades", "Target hit", "Stop hit",
-                                         "Timed out", "Avg R before costs", "Avg R after costs", "Reliability"])
+            header(breakdown, row + 1, ["Group", "Completed", "Share of total", "Avg net R", "Delta vs overall R", "Sample: trades / market days"])
             row += 2
-            for label, group in base.groupby(column, observed=True):
-                stats = summarise(group)
-                put(breakdown, row, [str(label), stats["n"], pct(stats["target"]), pct(stats["stop"]), pct(stats["timeout"]),
-                                     round(stats["gross"], 3), round(stats["net"], 3), reliability(stats["n"])])
-                fill = r_fill(stats["net"])
-                if fill and stats["n"] >= 30:
-                    breakdown.cell(row, 7).fill = PatternFill("solid", fgColor=fill)
-                for column in range(2, 9):
-                    breakdown.cell(row, column).alignment = Alignment(horizontal="center")
-                row += 1
+            put(breakdown, row, ["Overall pool baseline", len(base), 1., round(overall, 4), 0., f"{len(base)} trades / {base['day'].nunique()} market days"], fill=NEUTRAL)
+            breakdown.cell(row, 3).number_format = "0.0%"
             row += 1
+            for label, group in base.groupby(column, observed=True):
+                average = float(group["r_net_stamp"].mean())
+                put(breakdown, row, [str(label), len(group), len(group)/len(base), round(average, 4), round(average-overall, 4),
+                                     f"{len(group)} trades / {group['day'].nunique()} market days"])
+                breakdown.cell(row, 3).number_format = "0.0%"
+                row += 1
+            row += 2
+        put(breakdown, row, ["Supporting price-event counts"], bold=True)
+        header(breakdown, row+1, ["Scope", "Completed", "Target", "Stop", "Timeout"])
+        put(breakdown, row+2, ["Overall completed pool", len(base), int((base["outcome"]=="target").sum()),
+                               int((base["outcome"]=="stop").sum()), int((base["outcome"]=="timeout").sum())])
     else:
-        put(breakdown, row, ["No completed trades yet."])
-    widths(breakdown, [24, 9, 11, 10, 11, 16, 16, 18])
+        put(breakdown, row, ["No completed pool trades; baseline and subsets are unavailable."])
+    widths(breakdown, [28, 13, 16, 16, 22, 34, 3])
+    breakdown.freeze_panes = "A6"
 
     # ---------------- Mock trades ----------------
     top2 = picks["Top 2 per day"]
-    note_row(mock, 1, f"Each day the mock trader takes the top 2 ideas from the first scan at or after {args.pick_time}. "
+    note_row(mock, 1, f"Each day the mock trader takes the top 2 ideas from the first scan available at or after {args.pick_time}. "
                       f"Each mock trade is £{args.position_gbp:.0f} of shares bought (or sold short). "
                       f"Dealing costs = {args.cost_pct:.2f}% of the position (buy and sell together). Stamp duty = {args.stamp_duty_pct:.2f}% of the position "
                       f"on long trades in real shares (spread bets and CFDs don't pay it, and shorts never do). "
@@ -448,21 +577,21 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
              last_col=18, chars_per_line=190, fill=NEUTRAL)
     header(mock, 2, ["Date", "Scan time", "Rank", "Company", "Ticker", "Direction", "Setup", "Entry", "Stop", "Target",
                      "Result", "Exit time", "Amount traded (£)", "Gross profit / loss (£)", "Dealing costs (£)",
-                     "Stamp duty (£)", "Net after all fees (£)", "Running net (£)"])
+                     "Stamp duty (£)", "Net after all fees (£)", "Realised running net (£)"])
     mock.row_dimensions[2].height = 45
     if not top2.empty:
         joined = top2.merge(outcomes[outcomes["horizon"] == main_h], on="key", how="left", suffixes=("", "_o"))
         joined = add_costs(joined.assign(fill_risk_pct=joined["fill_risk_pct"]), args.cost_pct, args.stamp_duty_pct)
-        joined = joined.sort_values(["day", "as_of", "rank"])
+        joined = realised_order(joined)
+        mock_cash = cash_flows(joined)
         running = 0.0
-        for number, (_, r) in enumerate(joined.iterrows(), 3):
+        for number, (idx, r) in enumerate(joined.iterrows(), 3):
             status = r["status"] if isinstance(r["status"], str) else "pending"
             head = [r["day"], r["as_of"], int(r["rank"]), r["company"], r["ticker"], r["direction"], r["setup"]]
             if status == "done":
                 position = args.position_gbp
-                risk = position * r["fill_risk_pct"] / 100          # pounds lost if the stop is hit
-                gross, dealing, stamp = r["r_gross"] * risk, r["cost_r"] * risk, r["stamp_r"] * risk
-                net = gross - dealing - stamp
+                gross, dealing, stamp, net = (float(mock_cash.loc[idx, column]) for column in
+                                              ("gross_gbp", "dealing_gbp", "stamp_gbp", "net_gbp"))
                 running += net
                 label = {"target": "Target hit", "stop": "Stopped out", "timeout": "Closed at end of hold"}[r["outcome"]]
                 put(mock, number, head + [round(r["fill"], 2), round(r["stop"], 2), round(r["target"], 2), label,
@@ -478,33 +607,33 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
     widths(mock, [11, 10, 6, 28, 9, 10, 12, 9, 9, 9, 40, 16, 14, 14, 13, 12, 14, 13])
     mock.freeze_panes = "A3"
 
-    # ---------------- Daily equity ----------------
+    # ---------------- Daily realised balance ----------------
     header(daily, 1, ["Date"] + [f"{n} (cumulative R)" for n in PICK_SCENARIOS] + ["Top 2 per day (cumulative £)"])
     daily.row_dimensions[1].height = 45
     curves = {}
     for name in PICK_SCENARIOS:
         trades = trades_for(picks[name], main_h) if not picks[name].empty else pd.DataFrame()
-        curves[name] = trades.groupby("day")["r_net"].sum() if not trades.empty else pd.Series(dtype=float)
+        curves[name] = trades.groupby("realised_day")["r_net"].sum() if not trades.empty else pd.Series(dtype=float)
     all_days = sorted(set().union(*[set(c.index) for c in curves.values()])) if curves else []
     cumulative = {name: curves[name].reindex(all_days, fill_value=0.0).cumsum() for name in PICK_SCENARIOS}
     top2_trades = trades_for(picks["Top 2 per day"], main_h) if not picks["Top 2 per day"].empty else pd.DataFrame()
     if top2_trades.empty:
         pounds_by_day = pd.Series(dtype=float)
     else:
-        net_gbp = (top2_trades["r_net"] - top2_trades["stamp_r"]) * top2_trades["fill_risk_pct"] / 100 * args.position_gbp
-        pounds_by_day = net_gbp.groupby(top2_trades["day"]).sum().reindex(all_days, fill_value=0.0).cumsum()
+        net_gbp = cash_flows(top2_trades)["net_gbp"]
+        pounds_by_day = net_gbp.groupby(top2_trades["realised_day"]).sum().reindex(all_days, fill_value=0.0).cumsum()
     for number, day in enumerate(all_days, 2):
         put(daily, number, [day] + [round(float(cumulative[n][day]), 3) for n in PICK_SCENARIOS]
             + [round(float(pounds_by_day.get(day, 0.0)), 2)])
     widths(daily, [12, 22, 22, 26, 24])
     if len(all_days) >= 2:
         chart = LineChart()
-        chart.title = f"Paper-trading equity, hold up to {main_h} day(s), R after costs"
+        chart.title = f"Realised paper balance, hold up to {main_h} day(s), R after costs"
         chart.y_axis.title, chart.x_axis.title = "Cumulative R", "Date"
         chart.add_data(Reference(daily, min_col=2, max_col=4, min_row=1, max_row=len(all_days) + 1), titles_from_data=True)
         chart.set_categories(Reference(daily, min_col=1, min_row=2, max_row=len(all_days) + 1))
         for series, colour in zip(chart.series, ("2F6DB5", "C0392B", "2E9E5B")):
-            series.smooth = False                      # straight lines: an equity path has no values between trades
+            series.smooth = False                      # straight lines: realised balance changes only on exits
             series.graphicalProperties.line.solidFill = colour
             series.graphicalProperties.line.width = 22000
         chart.x_axis.tickLblPos = "low"                # day labels at the bottom, not across the zero line
@@ -521,7 +650,8 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
     header(allout, 1, heads)
     allout.row_dimensions[1].height = 45
     by_h = {h: outcomes[outcomes["horizon"] == h].set_index("key") for h in horizons}
-    for number, (_, r) in enumerate(pool.sort_values(["day", "as_of", "score"], ascending=[False, False, False]).iterrows(), 2):
+    ordered_pool = pool.sort_values(["day", "as_of", "score"], ascending=[False, False, False]) if not pool.empty else pool
+    for number, (_, r) in enumerate(ordered_pool.iterrows(), 2):
         values = [r["day"], r["as_of"], r["company"], r["ticker"], "Trust" if kinds.get(r["ticker"]) == "trust" else "Company",
                   r["index"], r["setup"], r["direction"], r["score"], int(r["touches"]), r["stop"], r["target"]]
         for horizon in horizons:
@@ -535,6 +665,41 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
         put(allout, number, values)
     widths(allout, [11, 10, 30, 9, 9, 10, 9, 9, 7, 8, 9, 9] + [11, 12] * len(horizons))
     allout.freeze_panes = "A2"
+    money_format = '"£"#,##0.00;[Red]-"£"#,##0.00;"£"0.00'
+    signed_r_format = '+0.000;[Red]-0.000;0.000'
+    for row_idx, cols in ((6,[1]),(9,[1,2,3,4])):
+        for col in cols:
+            summary.cell(row_idx,col).number_format=money_format
+    for ws in (mock,daily):
+        start_row=3 if ws is mock else 2
+        currency_cols=range(13,19) if ws is mock else [5]
+        for row_idx in range(start_row,ws.max_row+1):
+            for col in currency_cols:
+                if isinstance(ws.cell(row_idx,col).value,(float,int)):
+                    ws.cell(row_idx,col).number_format=money_format
+            if ws is daily:
+                for col in (2,3,4):
+                    ws.cell(row_idx,col).number_format=signed_r_format
+    for ws in (comparison,breakdown):
+        for row_idx in range(1,ws.max_row+1):
+            for col in range(1,ws.max_column+1):
+                cell=ws.cell(row_idx,col)
+                if not isinstance(cell.value,(float,int)):
+                    continue
+                if ws is breakdown:
+                    block_header=next((r for r in range(row_idx-1,0,-1) if ws.cell(r,1).value in ("Group","Scope")),None)
+                    label=str(ws.cell(block_header,col).value or "") if block_header else ""
+                    if label in ("Completed","Target","Stop","Timeout"):
+                        cell.number_format="0"
+                    elif label in ("Avg net R","Delta vs overall R"):
+                        cell.number_format=signed_r_format
+                elif ws is comparison:
+                    # Locate the current block header above this data row.
+                    previous=next((r for r in range(row_idx-1,0,-1) if ws.cell(r,1).value=="Scenario"),None)
+                    if previous:
+                        label=str(ws.cell(previous,col).value or "")
+                        if "(£)" in label:cell.number_format=money_format
+                        elif " R" in label:cell.number_format=signed_r_format
     return wb
 
 
@@ -575,12 +740,15 @@ def main() -> None:
         sys.exit(1)
 
     pool = first_sightings(candidates)
-    picks = build_picks(candidates, args.pick_time)
+    runs = sc._read_table(data_dir / "runs.csv", sc.RUN_COLUMNS)
+    picks = build_picks(candidates, args.pick_time, runs)
     needed = pd.concat([pool] + [p for p in picks.values() if not p.empty]).drop_duplicates("key")
     print(f"{len(candidates)} logged setups on {candidates['day'].nunique()} day(s); "
           f"{len(pool)} first sightings, {len(needed)} to follow up.")
 
-    out_path = data_dir / "outcomes.csv"
+    out_path = data_dir / CACHE_FILENAME
+    if (data_dir / "outcomes.csv").exists():
+        print("Original outcomes.csv retained as superseded v1 baseline; corrected results use " + CACHE_FILENAME)
     cache = read_outcomes(out_path)
     resolved, pending, failed = evaluate_pending(needed, cache, horizons, args.interval, args.period, args.delay, out_path)
     print(f"Resolved {resolved} new outcome(s); {pending} not resolvable yet (the hold period hasn't finished); {failed} download(s) failed.")
@@ -597,7 +765,7 @@ def main() -> None:
         merged = merged[merged["status"] == "done"]
         if not merged.empty:
             merged = add_costs(merged, args.cost_pct, args.stamp_duty_pct)
-            stats = summarise(merged.sort_values(["day", "as_of", "rank"]))
+            stats = summarise(merged)
             print(f"\nMock trader (top 2 per day, hold up to {args.horizon}d): {stats['n']} trades, "
                   f"{pct(stats['target'])} hit target, average {stats['net']:.2f}R after costs, total {stats['total_net']:.1f}R.")
             if stats["n"] < 30:

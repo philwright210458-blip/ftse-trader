@@ -44,7 +44,7 @@ class ReportTests(unittest.TestCase):
         totals = [sum(float(mock.cell(r, c).value or 0) for r in range(3, mock.max_row + 1)) for c in (14, 15, 16, 17)]
         for expected, actual in zip((gross, dealing, stamp, net), totals):
             self.assertAlmostEqual(expected, actual)
-        self.assertAlmostEqual(self.book["Daily"].cell(3, 5).value, net)
+        self.assertAlmostEqual(self.book["Daily"].cell(3, 3).value, net)
 
     def test_alternative_scenarios_reconcile_and_same_cost_basis(self):
         ws = self.book["Strategy Comparison"]
@@ -70,6 +70,15 @@ class ReportTests(unittest.TestCase):
         self.assertIn("rather than a matched-time causal ranking test", text)
         self.assertNotIn("Break-even target-hit rate", text)
 
+    def test_no_risk_multiple_units_shown(self):
+        import re
+        for sheet in self.book.worksheets:
+            for row in sheet.iter_rows():
+                for cell in row:
+                    if isinstance(cell.value, str):
+                        self.assertIsNone(re.search(r"(\bnet R\b|\bavg R\b|cumulative R|\bR,|\(R\)| R after)", cell.value, re.I),
+                                          f"{sheet.title}!{cell.coordinate}: {cell.value}")
+
     def test_currency_r_and_sample_formats(self):
         summary = self.book["Summary"]
         for row, col in ((6, 1), (9, 1), (9, 2), (9, 3), (9, 4)):
@@ -77,9 +86,9 @@ class ReportTests(unittest.TestCase):
             self.assertIn("0.00", summary.cell(row, col).number_format)
         self.assertIn("Evidence: 4 completed trades across 2 market day", summary.cell(4, 1).value)
         self.assertIn("£", self.book["Mock Trades"].cell(3, 17).number_format)
-        self.assertIn("£", self.book["Daily"].cell(2, 5).number_format)
+        self.assertIn("£", self.book["Daily"].cell(2, 3).number_format)
         comparison = self.book["Strategy Comparison"]
-        self.assertIn("+0.000", comparison.cell(7, 9).number_format)
+        self.assertIn("£", comparison.cell(7, 9).number_format)
         self.assertIn("£", comparison.cell(14, 9).number_format)
         alltexts = " ".join(str(c.value or "") for row in self.book["Breakdowns"] for c in row)
         self.assertIn("at least 4 bars apart", alltexts)
@@ -122,7 +131,7 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(book["Summary"].cell(6, 1).value, 0.99)
         mock = book["Mock Trades"]
         self.assertAlmostEqual(sum(mock.cell(r, 17).value for r in range(3, 6)), 0.99)
-        self.assertEqual(book["Daily"].cell(3, 5).value, 0.99)
+        self.assertEqual(book["Daily"].cell(3, 3).value, 0.99)
 
     def test_pending_only_headline_is_not_zero_profit(self):
         self.args.horizon = 2

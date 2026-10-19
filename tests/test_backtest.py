@@ -65,11 +65,11 @@ class BacktestTests(unittest.TestCase):
              mock.patch.object(bt, "download", return_value=(intraday, daily)):
             self.assertEqual(bt.run(args), 0)
         book = openpyxl.load_workbook(out)
-        self.assertEqual(book.sheetnames, ["Summary", "Daily", "Trades (baseline)"])
-        summary = pd.DataFrame(list(book["Summary"].iter_rows(min_row=6, values_only=True)))
+        self.assertEqual(book.sheetnames, ["Summary", "Daily", "Trades (baseline)", "Trades (trend pullback)"])
+        summary = pd.DataFrame(list(book["Summary"].iter_rows(min_row=7, values_only=True)))
         summary.columns = summary.iloc[0]
         summary = summary.iloc[1:]
-        self.assertEqual(len(summary), 18)        # 6 variants x 3 scenarios
+        self.assertEqual(len(summary), 21)        # 6 variants x 3 scenarios + 3 trend-pullback rows
         trades = pd.DataFrame(list(book["Trades (baseline)"].iter_rows(values_only=True)))
         trades.columns = trades.iloc[0]
         done = trades.iloc[1:].dropna(subset=["After costs (£)"])
@@ -100,6 +100,44 @@ class FilterTests(unittest.TestCase):
         price, now, then = bt.ema_momentum(data, index[29])
         self.assertEqual(price, 29.0)
         self.assertGreater(now, then)          # rising, and the later crash is not visible yet
+
+
+
+class PullbackTests(unittest.TestCase):
+    def setUp(self):
+        import ftse_pullback as pb
+        self.pb = pb
+        self.company = sc.Constituent("Alpha plc", "AAA", "AAA.L", "FTSE 100", "company")
+        days = pd.date_range("2026-01-01", periods=80, freq="B")
+        self.rising_daily = pd.Series(np.linspace(80, 100, 80), index=days)
+
+    def intraday(self, prices):
+        index = pd.date_range("2026-04-21 08:00", periods=len(prices), freq="15min", tz=sc.UK_TZ)
+        closes = pd.Series(prices, index=index, dtype=float)
+        opens = closes.shift(1).fillna(closes.iloc[0])
+        return pd.DataFrame({"open": opens, "close": closes, "high": np.maximum(opens, closes) + 0.05,
+                             "low": np.minimum(opens, closes) - 0.05, "volume": 1000}, index=index)
+
+    def test_daily_trend_needs_rising_average_and_price_above(self):
+        self.assertEqual(self.pb.daily_trend(self.rising_daily, "2026-04-21"), 1)
+        self.assertEqual(self.pb.daily_trend(-self.rising_daily, "2026-04-21"), -1)
+        self.assertEqual(self.pb.daily_trend(self.rising_daily, "2026-02-01"), 0)       # not enough history yet
+
+    def test_pullback_to_20_ema_then_turn_up_gives_one_buy_with_stop_below_dip(self):
+        climb = list(np.linspace(100, 103, 24))
+        dip = [102.4, 101.95, 102.1]         # eases back to the rising 20-period average
+        turn = [102.6, 102.9, 103.2]         # closes back above the 9-period average
+        rows = self.pb.signals(self.company, self.intraday(climb + dip + turn), self.rising_daily)
+        self.assertEqual(len(rows), 1)                       # one trade per share per day
+        row = rows[0]
+        self.assertEqual(row["direction"], "Long")
+        self.assertLess(row["stop"], min(dip))
+        self.assertAlmostEqual(row["target"] - row["entry"], 2 * (row["entry"] - row["stop"]), places=3)
+        self.assertGreater(pd.Timestamp(row["run_time"]), pd.Timestamp(row["data_time"]).tz_localize(None))
+
+    def test_no_buy_when_daily_trend_is_down(self):
+        climb = list(np.linspace(100, 103, 28)) + [102.6, 102.4, 102.5, 102.9, 103.1]
+        self.assertEqual(self.pb.signals(self.company, self.intraday(climb), -self.rising_daily), [])
 
 
 if __name__ == "__main__":

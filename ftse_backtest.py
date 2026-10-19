@@ -46,6 +46,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 import ftse_outcomes as out
+import ftse_pullback as pb
 import ftse_trade_scanner as sc
 from ftse_sessions import is_session, session_open_close
 
@@ -58,6 +59,7 @@ VARIANTS = ["Baseline (live rules)", "Trend filter (50-day average)", "Stop at l
             "Trend + 50-day slope", "Trend + slope + 20-EMA momentum"]
 SLOPE_DAYS = 10      # the 50-day average must be higher (buys) or lower (sells) than it was this many trading days earlier
 EMA_SPAN, EMA_LOOKBACK = 20, 4   # 20-period EMA on 15-minute candles, rising/falling over the last 4 candles (1 hour)
+PULLBACK = "Trend pullback (new strategy)"
 SCENARIOS = ["Every idea (pool)", "Top 2 at 10:30", "Live: first 3 triggers"]
 
 
@@ -317,7 +319,8 @@ def note(ws, row: int, text: str, last_col: int = 12) -> None:
     ws.row_dimensions[row].height = 15 * max(1, math.ceil(len(text) / 150))
 
 
-def build_workbook(summary: pd.DataFrame, daily: pd.DataFrame, trades: pd.DataFrame, period_text: str, generated: str) -> Workbook:
+def build_workbook(summary: pd.DataFrame, daily: pd.DataFrame, trades: pd.DataFrame, period_text: str, generated: str,
+                   pullback_trades: pd.DataFrame | None = None) -> Workbook:
     wb = Workbook()
     ws = wb.active
     ws.title = "Summary"
@@ -331,18 +334,22 @@ def build_workbook(summary: pd.DataFrame, daily: pd.DataFrame, trades: pd.DataFr
                 "earlier. Trend + slope + 20-EMA momentum = as that, and on the 15-minute chart the price must be above a rising "
                 "20-period average for buys (below a falling one for sells) at the signal. Scenarios: Every "
                 "idea = all ideas at first sighting; Top 2 at 10:30 = your main mock trader; Live: first 3 triggers = the live mock trader.")
+    note(ws, 5, "Trend pullback (new strategy, idea 17): a different engine, not a filter. Daily trend: price above a rising 50-day "
+                "average (sells: below a falling one). On 15-minute candles the 20-period average must be rising with the 9-period above "
+                "it; the price dips to the 20-period average and the next candle closes back above the 9-period. Stop below the dip, "
+                "target 2x the stop distance, one trade per share per day, signals 09:00-15:30.")
     note(ws, 4, "Caution: results from the past can flatter a model, especially after tweaking. Use this to choose what to test, then "
                 "judge it on new live results. The earliest days in the history had less data for finding zones than the live scanner has.")
     money = [c for c in summary.columns if "(£)" in c]
     pct = ["Target hit", "Stop hit", "Closed at end", "Profitable days"]
-    end = write_table(ws, 6, summary, money, pct)
-    for r in range(7, end):
+    end = write_table(ws, 7, summary, money, pct)
+    for r in range(8, end):
         value = ws.cell(r, summary.columns.get_loc("Avg after costs per £100 (£)") + 1).value
         if isinstance(value, (int, float)):
             ws.cell(r, summary.columns.get_loc("Avg after costs per £100 (£)") + 1).fill = PatternFill("solid", fgColor=GOOD if value > 0 else BAD)
     for column, width in enumerate([30, 24, 11, 9, 9, 9, 10, 13, 13, 13, 10, 11, 11, 13, 13, 12, 12], 1):
         ws.column_dimensions[get_column_letter(column)].width = width
-    ws.freeze_panes = "C7"
+    ws.freeze_panes = "C8"
 
     days_ws = wb.create_sheet("Daily")
     note(days_ws, 1, "Profit or loss after costs for each day, per variant, for 'Every idea' and 'Top 2 at 10:30'. Look for whether losses "
@@ -352,16 +359,24 @@ def build_workbook(summary: pd.DataFrame, daily: pd.DataFrame, trades: pd.DataFr
         days_ws.column_dimensions[get_column_letter(column)].width = 14 if column > 1 else 12
     days_ws.freeze_panes = "B4"
 
-    trade_ws = wb.create_sheet("Trades (baseline)")
-    columns = ["day", "run_time", "mode", "scenario", "company", "ticker", "direction", "setup", "score", "fill", "stop",
-               "target", "outcome", "exit_time", "gross_gbp", "costs_gbp", "net_gbp"]
-    shown = trades[[c for c in columns if c in trades.columns]].rename(columns={
-        "day": "Date", "run_time": "Signal time", "mode": "Scan", "scenario": "Scenario", "company": "Company",
-        "ticker": "Ticker", "direction": "Direction", "setup": "Setup", "score": "Score", "fill": "Entry (filled)",
-        "stop": "Stop", "target": "Target", "outcome": "Result", "exit_time": "Exit time",
-        "gross_gbp": "Before costs (£)", "costs_gbp": "Costs (£)", "net_gbp": "After costs (£)"})
-    write_table(trade_ws, 1, shown, ["Before costs (£)", "Costs (£)", "After costs (£)"])
-    trade_ws.freeze_panes = "A2"
+    def trade_sheet(title: str, frame: pd.DataFrame) -> None:
+        trade_ws = wb.create_sheet(title)
+        if frame is None or frame.empty:
+            trade_ws.cell(1, 1, "No trades.")
+            return
+        columns = ["day", "run_time", "mode", "scenario", "company", "ticker", "direction", "setup", "score", "fill", "stop",
+                   "target", "outcome", "exit_time", "gross_gbp", "costs_gbp", "net_gbp"]
+        shown = frame[[c for c in columns if c in frame.columns]].rename(columns={
+            "day": "Date", "run_time": "Signal time", "mode": "Scan", "scenario": "Scenario", "company": "Company",
+            "ticker": "Ticker", "direction": "Direction", "setup": "Setup", "score": "Score", "fill": "Entry (filled)",
+            "stop": "Stop", "target": "Target", "outcome": "Result", "exit_time": "Exit time",
+            "gross_gbp": "Before costs (£)", "costs_gbp": "Costs (£)", "net_gbp": "After costs (£)"})
+        write_table(trade_ws, 1, shown, ["Before costs (£)", "Costs (£)", "After costs (£)"])
+        trade_ws.freeze_panes = "A2"
+
+    trade_sheet("Trades (baseline)", trades)
+    if pullback_trades is not None:
+        trade_sheet("Trades (trend pullback)", pullback_trades)
     return wb
 
 
@@ -437,6 +452,27 @@ def run(args) -> int:
                 daily_cols[f"{variant}: {scenario} (£)"] = done.groupby("day")["net_gbp"].sum()
             if variant == VARIANTS[0] and not trades.empty:
                 baseline_trades.append(trades.assign(scenario=scenario))
+    print("Scoring: trend pullback (new strategy)...")
+    replay_days = set(setups["day"])
+    pull_rows = []
+    for company in universe:
+        pull_rows.extend(pb.signals(company, intraday.get(company.yahoo_ticker), daily.get(company.yahoo_ticker),
+                                    minutes, replay_days))
+    pullback_trades = []
+    pull = with_keys(pd.DataFrame(pull_rows)) if pull_rows else pd.DataFrame()
+    pull_sets = {"Every signal": pull,
+                 "First 3 per day": live_picks(pull) if not pull.empty else pull,
+                 "First 3 per day, buys only": live_picks(pull[pull["direction"] == "Long"]) if not pull.empty else pull}
+    for scenario, chosen in pull_sets.items():
+        if chosen.empty:
+            summary.append({"Variant": PULLBACK, "Scenario": scenario, "Completed trades": 0})
+            continue
+        trades = score(chosen, intraday, args.horizon, now, args.interval)
+        summary.append(summary_row(PULLBACK, scenario, trades))
+        if not trades.empty:
+            done = trades[trades["status"] == "done"]
+            daily_cols[f"{PULLBACK}: {scenario} (£)"] = done.groupby("day")["net_gbp"].sum()
+            pullback_trades.append(trades.assign(scenario=scenario))
     summary_frame = pd.DataFrame(summary)
     daily_frame = pd.DataFrame(daily_cols).sort_index().round(2)
     daily_frame.index.name = "Date"
@@ -446,7 +482,8 @@ def run(args) -> int:
     period_text = (f"{days[0]} to {days[-1]} ({len(days)} trading days, {len(universe)} shares); each trade held up to "
                    f"{args.horizon} trading day(s), then closed at the last price if neither stop nor target was hit")
     generated = datetime.now(sc.UK_TZ).strftime("%Y-%m-%d %H:%M UK time")
-    workbook = build_workbook(summary_frame, daily_frame, trades_frame, period_text, generated)
+    pull_frame = pd.concat(pullback_trades, ignore_index=True) if pullback_trades else pd.DataFrame()
+    workbook = build_workbook(summary_frame, daily_frame, trades_frame, period_text, generated, pull_frame)
     saved = sc.save_workbook(workbook, Path(args.out))
     print(f"\nReplayed {period_text}: {len(runs)} scans, {len(setups)} setups.")
     print(summary_frame[["Variant", "Scenario", "Completed trades", "Avg after costs per £100 (£)", "Total after costs (£)"]]

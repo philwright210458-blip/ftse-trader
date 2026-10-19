@@ -400,7 +400,8 @@ def run(args) -> int:
     daily_frame = daily_frame.reset_index()
     trades_frame = pd.concat(baseline_trades, ignore_index=True) if baseline_trades else pd.DataFrame()
     days = sorted(setups["day"].unique())
-    period_text = f"{days[0]} to {days[-1]} ({len(days)} trading days, {len(universe)} shares)"
+    period_text = (f"{days[0]} to {days[-1]} ({len(days)} trading days, {len(universe)} shares); each trade held up to "
+                   f"{args.horizon} trading day(s), then closed at the last price if neither stop nor target was hit")
     generated = datetime.now(sc.UK_TZ).strftime("%Y-%m-%d %H:%M UK time")
     workbook = build_workbook(summary_frame, daily_frame, trades_frame, period_text, generated)
     saved = sc.save_workbook(workbook, Path(args.out))

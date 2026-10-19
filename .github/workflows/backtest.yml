@@ -8,6 +8,10 @@ name: FTSE Backtest
 on:
   workflow_dispatch:
     inputs:
+      hold_days:
+        description: "Longest hold per trade in trading days (1 = same day)"
+        required: false
+        default: "1"
       limit:
         description: "Only the first N shares (leave blank for all)"
         required: false
@@ -40,26 +44,27 @@ jobs:
       - name: Run backtest
         env:
           LIMIT: ${{ inputs.limit }}
+          HOLD: ${{ inputs.hold_days }}
         run: |
-          if [ -n "$LIMIT" ]; then
-            python -u ftse_backtest.py --exclude-trusts --limit "$LIMIT" --out ftse_backtest.xlsx
-          else
-            python -u ftse_backtest.py --exclude-trusts --out ftse_backtest.xlsx
-          fi
+          if [ "$HOLD" = "1" ] || [ -z "$HOLD" ]; then OUT=ftse_backtest.xlsx; HOLD=1; else OUT="ftse_backtest_hold${HOLD}d.xlsx"; fi
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+          EXTRA=""
+          if [ -n "$LIMIT" ]; then EXTRA="--limit $LIMIT"; fi
+          python -u ftse_backtest.py --exclude-trusts --horizon "$HOLD" $EXTRA --out "$OUT"
 
       - name: Make results downloadable
         uses: actions/upload-artifact@v4
         with:
-          name: ftse-backtest
-          path: ftse_backtest.xlsx
+          name: ftse-backtest-${{ inputs.hold_days }}d
+          path: ${{ env.OUT }}
 
       - name: Save results to the repo
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
-          git add ftse_backtest.xlsx
+          git add "$OUT"
           if git diff --cached --quiet; then echo "Nothing new to save."; exit 0; fi
-          git commit -m "Backtest $(TZ=Europe/London date '+%Y-%m-%d %H:%M')"
+          git commit -m "Backtest (hold up to ${{ inputs.hold_days }}d) $(TZ=Europe/London date '+%Y-%m-%d %H:%M')"
           for attempt in 1 2 3; do
             git pull --rebase && git push && exit 0
             sleep 15

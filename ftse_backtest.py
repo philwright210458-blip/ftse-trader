@@ -54,7 +54,10 @@ WATCH_LAST_CLOCK = "12:45"
 FULL_DELAY = pd.Timedelta(minutes=3)    # live full scans finish about 3 minutes after the candle closes
 WATCH_DELAY = pd.Timedelta(minutes=2)   # live watch scans finish about 1-2 minutes after
 DEALING_PCT, STAMP_PCT = 0.10, 0.5
-VARIANTS = ["Baseline (live rules)", "Trend filter (50-day average)", "Stop at least 1%", "Stop at least 2%"]
+VARIANTS = ["Baseline (live rules)", "Trend filter (50-day average)", "Stop at least 1%", "Stop at least 2%",
+            "Trend + 50-day slope", "Trend + slope + 20-EMA momentum"]
+SLOPE_DAYS = 10      # the 50-day average must be higher (buys) or lower (sells) than it was this many trading days earlier
+EMA_SPAN, EMA_LOOKBACK = 20, 4   # 20-period EMA on 15-minute candles, rising/falling over the last 4 candles (1 hour)
 SCENARIOS = ["Every idea (pool)", "Top 2 at 10:30", "Live: first 3 triggers"]
 
 
@@ -85,6 +88,25 @@ def sma_before(daily_closes: pd.Series, day: pd.Timestamp, length: int = 50) -> 
     dates = index.tz_localize(None).normalize() if index.tz is not None else index.normalize()
     prior = daily_closes[dates < pd.Timestamp(day.date())].dropna()
     return float(prior.tail(length).mean()) if len(prior) >= length else None
+
+
+def sma_slope_before(daily_closes: pd.Series, day: pd.Timestamp, length: int = 50, lookback: int = SLOPE_DAYS):
+    """(average now, average `lookback` trading days earlier), both from closes strictly before `day`."""
+    index = pd.DatetimeIndex(daily_closes.index)
+    dates = index.tz_localize(None).normalize() if index.tz is not None else index.normalize()
+    prior = daily_closes[dates < pd.Timestamp(day.date())].dropna()
+    if len(prior) < length + lookback:
+        return None, None
+    return float(prior.tail(length).mean()), float(prior.iloc[:-lookback].tail(length).mean())
+
+
+def ema_momentum(data: pd.DataFrame, last_bar_start: pd.Timestamp, span: int = EMA_SPAN, lookback: int = EMA_LOOKBACK):
+    """(last close, EMA now, EMA `lookback` candles earlier) using only candles up to the signal candle."""
+    closes = data.loc[data.index <= last_bar_start, "close"].astype(float)
+    if len(closes) < span + lookback:
+        return None, None, None
+    ema = closes.ewm(span=span, adjust=False).mean()
+    return float(closes.iloc[-1]), float(ema.iloc[-1]), float(ema.iloc[-1 - lookback])
 
 
 # ----------------------------------------------------------------------
@@ -304,7 +326,10 @@ def build_workbook(summary: pd.DataFrame, daily: pd.DataFrame, trades: pd.DataFr
                 "Every trade is £100, entered at the open of the next 15-minute candle after the scan, stop counted first if stop "
                 "and target fall in one candle. Costs: 10p dealing per trade, plus 50p stamp duty on buys of real shares.")
     note(ws, 3, "Variants: Baseline = the live rules. Trend filter = buys only when the price is above its 50-day average close, sells "
-                "only below. Stop at least 1% / 2% = stops moved further away (target still 3x the stop distance). Scenarios: Every "
+                "only below. Stop at least 1% / 2% = stops moved further away (target still 3x the stop distance). Trend + 50-day slope = "
+                "as Trend filter, and the 50-day average must also be rising for buys (falling for sells) compared with 10 trading days "
+                "earlier. Trend + slope + 20-EMA momentum = as that, and on the 15-minute chart the price must be above a rising "
+                "20-period average for buys (below a falling one for sells) at the signal. Scenarios: Every "
                 "idea = all ideas at first sighting; Top 2 at 10:30 = your main mock trader; Live: first 3 triggers = the live mock trader.")
     note(ws, 4, "Caution: results from the past can flatter a model, especially after tweaking. Use this to choose what to test, then "
                 "judge it on new live results. The earliest days in the history had less data for finding zones than the live scanner has.")
@@ -377,8 +402,26 @@ def run(args) -> int:
                                                  or (row["direction"] == "Short" and row["entry"] < average)))
     trend = candidates[pd.Series(trend_ok, index=candidates.index)]
 
+    slope_ok, momentum_ok = [], []
+    for _, row in candidates.iterrows():
+        closes = daily.get(row["ticker"])
+        sma_now, sma_then = sma_slope_before(closes, pd.Timestamp(row["day"])) if closes is not None else (None, None)
+        long = row["direction"] == "Long"
+        ok = sma_now is not None and ((long and row["entry"] > sma_now and sma_now > sma_then)
+                                      or (not long and row["entry"] < sma_now and sma_now < sma_then))
+        slope_ok.append(ok)
+        if not ok:
+            momentum_ok.append(False)
+            continue
+        price, ema_now, ema_then = ema_momentum(intraday[row["ticker"]], out.market_stamp(row["data_time"]))
+        momentum_ok.append(price is not None and ((long and price > ema_now and ema_now > ema_then)
+                                                  or (not long and price < ema_now and ema_now < ema_then)))
+    slope = candidates[pd.Series(slope_ok, index=candidates.index)]
+    momentum = candidates[pd.Series(momentum_ok, index=candidates.index)]
+
     variant_sets = {VARIANTS[0]: (candidates, None), VARIANTS[1]: (trend, None),
-                    VARIANTS[2]: (candidates, 1.0), VARIANTS[3]: (candidates, 2.0)}
+                    VARIANTS[2]: (candidates, 1.0), VARIANTS[3]: (candidates, 2.0),
+                    VARIANTS[4]: (slope, None), VARIANTS[5]: (momentum, None)}
     summary, daily_cols, baseline_trades = [], {}, []
     for variant, (frame, min_stop) in variant_sets.items():
         print(f"Scoring: {variant}...")

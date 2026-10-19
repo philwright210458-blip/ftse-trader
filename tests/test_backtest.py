@@ -69,7 +69,7 @@ class BacktestTests(unittest.TestCase):
         summary = pd.DataFrame(list(book["Summary"].iter_rows(min_row=6, values_only=True)))
         summary.columns = summary.iloc[0]
         summary = summary.iloc[1:]
-        self.assertEqual(len(summary), 12)        # 4 variants x 3 scenarios
+        self.assertEqual(len(summary), 18)        # 6 variants x 3 scenarios
         trades = pd.DataFrame(list(book["Trades (baseline)"].iter_rows(values_only=True)))
         trades.columns = trades.iloc[0]
         done = trades.iloc[1:].dropna(subset=["After costs (£)"])
@@ -81,6 +81,25 @@ class BacktestTests(unittest.TestCase):
             # entries are always after the scan that produced them
             self.assertGreaterEqual(pd.Timestamp(row["Exit time"]).tz_convert(sc.UK_TZ).tz_localize(None),
                                     pd.Timestamp(row["Signal time"]))
+
+
+
+class FilterTests(unittest.TestCase):
+    def test_slope_compares_with_ten_days_earlier_without_peeking(self):
+        index = pd.date_range("2026-01-01", periods=80, freq="D")
+        rising = pd.Series(range(80), index=index, dtype=float)
+        now, then = bt.sma_slope_before(rising, pd.Timestamp("2026-03-21"))   # 79 closes before this day
+        self.assertEqual(now, float(np.mean(range(29, 79))))
+        self.assertEqual(then, float(np.mean(range(19, 69))))
+        self.assertGreater(now, then)
+        self.assertEqual(bt.sma_slope_before(rising, pd.Timestamp("2026-02-25")), (None, None))
+
+    def test_ema_uses_only_candles_up_to_the_signal(self):
+        index = pd.date_range("2026-08-03 08:00", periods=40, freq="15min", tz=sc.UK_TZ)
+        data = pd.DataFrame({"close": list(range(30)) + [0] * 10}, index=index, dtype=float)
+        price, now, then = bt.ema_momentum(data, index[29])
+        self.assertEqual(price, 29.0)
+        self.assertGreater(now, then)          # rising, and the later crash is not visible yet
 
 
 if __name__ == "__main__":

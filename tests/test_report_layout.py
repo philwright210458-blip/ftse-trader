@@ -67,7 +67,7 @@ class ReportTests(unittest.TestCase):
             if block:
                 self.assertEqual(ws.cell(header + 2, 4).value, 7)
         text = " ".join(str(c.value or "") for row in ws for c in row)
-        self.assertIn("rather than a matched-time causal ranking test", text)
+        self.assertIn("If a strategy can't beat the pool", text)
         self.assertNotIn("Break-even target-hit rate", text)
 
     def test_no_risk_multiple_units_shown(self):
@@ -88,8 +88,9 @@ class ReportTests(unittest.TestCase):
         self.assertIn("£", self.book["Mock Trades"].cell(3, 17).number_format)
         self.assertIn("£", self.book["Daily"].cell(2, 3).number_format)
         comparison = self.book["Strategy Comparison"]
-        self.assertIn("£", comparison.cell(7, 9).number_format)
-        self.assertIn("£", comparison.cell(14, 9).number_format)
+        headers = [r for r in range(1, comparison.max_row + 1) if comparison.cell(r, 1).value == "Scenario"]
+        self.assertIn("£", comparison.cell(headers[0] + 1, 9).number_format)
+        self.assertIn("£", comparison.cell(headers[1] + 1, 9).number_format)
         alltexts = " ".join(str(c.value or "") for row in self.book["Breakdowns"] for c in row)
         self.assertIn("at least 4 bars apart", alltexts)
         self.assertIn("0.3% (FTSE 100) or 0.4% (FTSE 250)", alltexts)

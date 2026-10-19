@@ -32,7 +32,11 @@ jobs:
     env:
       TEST: ${{ inputs.test }}
     steps:
+      # Check out the latest main, not the commit from when this run was requested:
+      # runs queue behind each other, and an earlier run may have saved new results meanwhile.
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - uses: actions/setup-python@v5
         with:

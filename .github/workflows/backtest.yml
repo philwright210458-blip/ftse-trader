@@ -1,0 +1,68 @@
+# FTSE Backtest: replays the scanner over Yahoo's recent 15-minute history and
+# scores the trades (see ftse_backtest.py). Run it by hand from the Actions tab.
+# It takes roughly 15-30 minutes and saves ftse_backtest.xlsx to the repo.
+# It doesn't touch the live scan history or the scheduled scans.
+
+name: FTSE Backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Only the first N shares (leave blank for all)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftse-backtest
+  cancel-in-progress: false
+
+jobs:
+  backtest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install packages
+        run: pip install -r requirements.txt
+
+      - name: Run backtest
+        env:
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          if [ -n "$LIMIT" ]; then
+            python -u ftse_backtest.py --exclude-trusts --limit "$LIMIT" --out ftse_backtest.xlsx
+          else
+            python -u ftse_backtest.py --exclude-trusts --out ftse_backtest.xlsx
+          fi
+
+      - name: Make results downloadable
+        uses: actions/upload-artifact@v4
+        with:
+          name: ftse-backtest
+          path: ftse_backtest.xlsx
+
+      - name: Save results to the repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add ftse_backtest.xlsx
+          if git diff --cached --quiet; then echo "Nothing new to save."; exit 0; fi
+          git commit -m "Backtest $(TZ=Europe/London date '+%Y-%m-%d %H:%M')"
+          for attempt in 1 2 3; do
+            git pull --rebase && git push && exit 0
+            sleep 15
+          done
+          echo "::error::Could not save results to the repo after 3 attempts."
+          exit 1

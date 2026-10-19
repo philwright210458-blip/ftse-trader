@@ -12,7 +12,8 @@ const snapshot = JSON.parse(
       "-c",
       'import json,publish_scans;print(json.dumps(publish_scans.build_snapshot("HEAD")))',
     ],
-    { cwd: new URL("../../", import.meta.url), encoding: "utf8" },
+    // The real archive grows daily; allow output beyond Node's 1 MB default buffer.
+    { cwd: new URL("../../", import.meta.url), encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
   ),
 );
 const env = {

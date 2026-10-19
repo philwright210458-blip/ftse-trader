@@ -733,6 +733,8 @@ def main() -> None:
                              "freshest candle in the scan; 0 turns the guard off (default: 30)")
     parser.add_argument("--exclude-trusts", action="store_true",
                         help="Leave out investment trusts and funds (the 'type' column in ftse_universe.csv)")
+    parser.add_argument("--live-max-per-day", type=int, default=3,
+                        help="Live mock trader: most new paper trades entered per day, in the order they trigger (default: 3; 0 turns it off)")
     parser.add_argument("--top", type=int, default=10, help="Show top N non-conflicting setups by quality score; 0 means no cap (default: 10)")
     args = parser.parse_args()
 
@@ -788,6 +790,10 @@ def main() -> None:
         ranked = ranked[:args.top]
 
     record_run(data_dir, info, selected)
+    live_rows = []
+    if args.live_max_per_day > 0:
+        from ftse_live_mock import record_live_mock
+        live_rows = record_live_mock(data_dir, info, [s for s in selected if not s.conflict], args.live_max_per_day)
     runs = _read_table(data_dir / "runs.csv", RUN_COLUMNS)
     setups_history = _read_table(data_dir / "setups.csv", SETUP_COLUMNS)
     saved = save_workbook(build_workbook(info, all_setups, selected, ranked, setups_history, runs, kinds), workbook_path)
@@ -805,6 +811,9 @@ def main() -> None:
             print(f"  - {failure}")
         if len(failures) > 15:
             print(f"  ...and {len(failures) - 15} more")
+    for row in live_rows:
+        print(f"Live mock trade #{row['trade_no']} today: {row['direction']} {row['company']} ({row['ticker']}), "
+              f"entry about {row['entry']}, stop {row['stop']}, target {row['target']}. Filled at the next candle's open.")
     print(f"\nWorkbook updated: {saved}")
 
 

@@ -1,0 +1,81 @@
+"""Live mock trader: records paper trades at the moment the scanner flags them.
+
+Each full or watch scan calls `record_live_mock` straight after saving its
+setups. New ideas are entered in the order they trigger (best score first
+within one scan), up to a daily limit, one trade per share per day. The entry
+is written to scan_data/live_mock_trades.csv immediately and committed with
+the scan, so the decision is fixed before anyone knows how the price moves.
+
+The trade itself is filled and scored later by ftse_outcomes.py using the same
+rules as every other idea: entry at the open of the first 15-minute candle
+after the scan finished, stop counted first if stop and target fall in the
+same candle, dealing costs and stamp duty deducted.
+"""
+
+from __future__ import annotations
+
+import csv
+from pathlib import Path
+
+import pandas as pd
+
+LIVE_FILENAME = "live_mock_trades.csv"
+LIVE_COLUMNS = ["day", "signal_time", "data_time", "mode", "trade_no", "company", "ticker", "index", "setup",
+                "direction", "score", "entry", "stop", "target", "risk_pct", "key"]
+DEFAULT_MAX_PER_DAY = 3
+DEFAULT_LAST_ENTRY = "15:30"
+
+
+def setup_key(data_time: str, ticker: str, direction: str, run_time: str, mode: str) -> str:
+    """Same key the outcome tracker builds from setups.csv, so the two files line up."""
+    return f"{data_time}|{ticker}|{direction}|{run_time}|{mode}"
+
+
+def read_live(path: Path) -> pd.DataFrame:
+    if not path.exists() or path.stat().st_size == 0:
+        return pd.DataFrame(columns=LIVE_COLUMNS)
+    return pd.read_csv(path, dtype=str, keep_default_na=False)
+
+
+def record_live_mock(data_dir: Path, info, candidates, max_per_day: int = DEFAULT_MAX_PER_DAY,
+                     last_entry: str = DEFAULT_LAST_ENTRY) -> list[dict]:
+    """Enter new live mock trades from this scan. Returns the rows added.
+
+    `info` is the scanner's RunInfo; `candidates` are this scan's non-conflicting
+    setups (already de-duplicated). Nothing is entered when the scan ran on a
+    different day from its data (e.g. a weekend re-run) or after `last_entry`.
+    """
+    run_day, run_clock = info.run_time[:10], info.run_time[11:16]
+    if run_day != info.day or run_clock > last_entry:
+        return []
+    path = Path(data_dir) / LIVE_FILENAME
+    existing = read_live(path)
+    today = existing[existing["day"] == info.day]
+    slots = max_per_day - len(today)
+    if slots <= 0:
+        return []
+    taken = set(today["ticker"])
+    data_time = info.data_time.isoformat()
+    rows = []
+    for setup in sorted(candidates, key=lambda s: s.quality_score, reverse=True):
+        if setup.conflict or getattr(setup, "stale", False) or setup.ticker in taken:
+            continue
+        taken.add(setup.ticker)
+        rows.append({
+            "day": info.day, "signal_time": info.run_time, "data_time": data_time, "mode": info.mode,
+            "trade_no": len(today) + len(rows) + 1, "company": setup.company, "ticker": setup.ticker,
+            "index": setup.index_label, "setup": setup.setup_type, "direction": setup.direction,
+            "score": setup.quality_score, "entry": round(setup.entry, 2), "stop": round(setup.stop, 2),
+            "target": round(setup.target, 2), "risk_pct": round(abs(setup.entry - setup.stop) / setup.entry * 100, 3),
+            "key": setup_key(data_time, setup.ticker, setup.direction, info.run_time, info.mode)})
+        if len(rows) >= slots:
+            break
+    if rows:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        new_file = not path.exists() or path.stat().st_size == 0
+        with open(path, "a", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=LIVE_COLUMNS)
+            if new_file:
+                writer.writeheader()
+            writer.writerows(rows)
+    return rows

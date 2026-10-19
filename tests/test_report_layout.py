@@ -20,7 +20,7 @@ class ReportTests(unittest.TestCase):
     def test_tab_order_and_explicit_fixture_label(self):
         self.assertEqual(
             self.book.sheetnames,
-            ["Summary", "Strategy Comparison", "Breakdowns", "Mock Trades", "Daily", "All Outcomes"],
+            ["Summary", "Strategy Comparison", "Breakdowns", "Mock Trades", "Live Mock Trades", "Daily", "All Outcomes"],
         )
         self.assertIn("SYNTHETIC FIXTURE", self.book["Summary"].cell(2, 1).value)
 

@@ -19,7 +19,7 @@ Rules (set once from the published research, not tuned to these results):
 5. Trades happen at the next morning's opening price. Costs: 0.10% dealing on
    every buy and sell, plus 0.5% stamp duty on every buy.
 
-Prices are Yahoo's dividend-adjusted prices, so returns include dividends.
+Dividends are added back from Yahoo's dividend records, so returns include them.
 Run on a machine that can reach Yahoo (the "FTSE Momentum Backtest" workflow):
 
     python ftse_momentum.py --exclude-trusts --out ftse_momentum_backtest.xlsx
@@ -79,25 +79,68 @@ class Result:
 # Data
 # ----------------------------------------------------------------------
 
-def download(tickers: list[str], start: str, chunk: int = 40, pause: float = 2.0) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Dividend-adjusted daily opens and closes, one column per ticker."""
+def download(tickers: list[str], start: str, chunk: int = 40,
+             pause: float = 2.0) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Daily opens and closes (split-adjusted, not dividend-adjusted) and dividends, one column per ticker.
+
+    Dividends are added back by this script (see with_dividends) rather than trusting Yahoo's
+    adjusted prices, because Yahoo sometimes records UK dividends in pounds against prices in pence."""
     import yfinance as yf
-    opens, closes = [], []
+    parts = {"Open": [], "Close": [], "Dividends": []}
     for first in range(0, len(tickers), chunk):
         batch = tickers[first:first + chunk]
-        raw = yf.download(batch, start=start, interval="1d", auto_adjust=True, progress=False,
+        raw = yf.download(batch, start=start, interval="1d", auto_adjust=False, actions=True, progress=False,
                           group_by="column", threads=True)
         if raw is None or raw.empty:
             continue
-        opens.append(raw["Open"] if isinstance(raw.columns, pd.MultiIndex) else raw[["Open"]].set_axis(batch, axis=1))
-        closes.append(raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw[["Close"]].set_axis(batch, axis=1))
+        for name in parts:
+            if isinstance(raw.columns, pd.MultiIndex):
+                part = raw[name] if name in raw.columns.get_level_values(0) else pd.DataFrame(0.0, index=raw.index, columns=batch)
+            else:
+                part = raw[[name]].set_axis(batch, axis=1) if name in raw.columns else pd.DataFrame(0.0, index=raw.index, columns=batch)
+            parts[name].append(part)
         print(f"  ...{min(first + chunk, len(tickers))}/{len(tickers)} downloaded")
         time.sleep(pause)
-    open_ = pd.concat(opens, axis=1) if opens else pd.DataFrame()
-    close = pd.concat(closes, axis=1) if closes else pd.DataFrame()
-    for frame in (open_, close):
+    frames = []
+    for name in ("Open", "Close", "Dividends"):
+        frame = pd.concat(parts[name], axis=1) if parts[name] else pd.DataFrame()
         frame.index = pd.DatetimeIndex(frame.index).tz_localize(None).normalize()
-    return open_.sort_index(), close.sort_index()
+        frames.append(frame.sort_index())
+    return frames[0], frames[1], frames[2].fillna(0.0)
+
+
+def with_dividends(open_: pd.DataFrame, close: pd.DataFrame, dividends: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """Total-return prices: earlier prices are scaled down by each dividend, as if it were reinvested.
+
+    A payment worth less than 0.2% of the share price that becomes 0.2%-15% when multiplied by 100 is
+    taken to be recorded in pounds against a price in pence, and is corrected."""
+    open_, close = open_.copy(), close.copy()
+    report = {"with_dividends": 0, "corrected": 0}
+    for ticker in close.columns:
+        if ticker not in dividends.columns:
+            continue
+        paid = dividends[ticker].reindex(close.index).fillna(0.0)
+        paid = paid[paid > 0]
+        if paid.empty:
+            continue
+        report["with_dividends"] += 1
+        before = close[ticker].ffill().shift(1)
+        factor = pd.Series(1.0, index=close.index)
+        fixed_any = False
+        for stamp, amount in paid.items():
+            price = before.get(stamp)
+            if not (isinstance(price, float) and math.isfinite(price) and price > 0):
+                continue
+            share = amount / price
+            if share < 0.002 and 0.002 <= share * 100 <= 0.15:
+                share, fixed_any = share * 100, True
+            if 0 < share < 0.5:
+                factor[close.index < stamp] *= 1 - share
+        report["corrected"] += int(fixed_any)
+        close[ticker] = close[ticker] * factor
+        if ticker in open_.columns:
+            open_[ticker] = open_[ticker] * factor
+    return open_, close, report
 
 
 def clean(open_: pd.DataFrame, close: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -332,7 +375,8 @@ def _table(ws, top: int, frame: pd.DataFrame, pct=(), money=()) -> int:
 
 
 def build_workbook(summary: pd.DataFrame, yearly: pd.DataFrame, curves: pd.DataFrame, trades: pd.DataFrame,
-                   holdings: pd.DataFrame, picks: pd.DataFrame, picks_note: str, generated: str, names: dict) -> Workbook:
+                   holdings: pd.DataFrame, picks: pd.DataFrame, picks_note: str, generated: str, names: dict,
+                   dividend_text: str = "") -> Workbook:
     wb = Workbook()
     ws = wb.active
     ws.title = "Summary"
@@ -343,7 +387,8 @@ def build_workbook(summary: pd.DataFrame, yearly: pd.DataFrame, curves: pd.DataF
                  "next morning's open; costs 0.10% per buy and sell plus 0.5% stamp duty on buys. Prices include dividends.")
     _note(ws, 3, "Read this first: the share list is today's FTSE 350, so companies that failed or left the index are missing. "
                  "That flatters every strategy that picks from the list. 'Every share on the list' has the same bias, so compare "
-                 "the model against that row, not only against the FTSE 100. Cash earns no interest here (it would in reality).")
+                 "the model against that row, not only against the FTSE 100. Cash earns no interest here (it would in reality). "
+                 + dividend_text)
     pct = ["Average yearly growth", "Worst fall from peak", "Months that rose", "Best year", "Worst year",
            "Closed trades that made money"]
     end = _table(ws, 5, summary, pct, ["£1,000 became (£)", "Costs paid (£)", "Avg per £100 after costs (£)"])
@@ -401,14 +446,21 @@ def run(args) -> int:
     tickers = [c.yahoo_ticker for c in universe]
     data_start = (pd.Timestamp(args.start) - pd.DateOffset(months=15)).strftime("%Y-%m-%d")
     print(f"Downloading daily prices for {len(tickers)} shares, the FTSE 100 and {BENCHMARK_TICKER} from {data_start}...")
-    open_, close = download(tickers + [MARKET_TICKER, BENCHMARK_TICKER], data_start)
+    open_, close, dividends = download(tickers + [MARKET_TICKER, BENCHMARK_TICKER], data_start)
     if close.empty or MARKET_TICKER not in close.columns:
         print("No data downloaded (is Yahoo reachable?).")
         return 1
     market = close[MARKET_TICKER]
-    bench_open, bench_close = open_.get(BENCHMARK_TICKER), close.get(BENCHMARK_TICKER)
     shares = [t for t in tickers if t in close.columns and close[t].notna().sum() > 0]
-    open_, close = clean(open_[shares], close[shares])
+    bench = [BENCHMARK_TICKER] if BENCHMARK_TICKER in close.columns else []
+    open_, close = clean(open_[shares + bench], close[shares + bench])
+    open_, close, dividend_report = with_dividends(open_, close, dividends)
+    bench_open, bench_close = (open_.pop(BENCHMARK_TICKER), close.pop(BENCHMARK_TICKER)) if bench else (None, None)
+    bench_paid = int((dividends.get(BENCHMARK_TICKER, pd.Series(dtype=float)) > 0).sum())
+    dividend_text = (f"Dividends: Yahoo had dividend records for {dividend_report['with_dividends']} of {len(shares) + len(bench)} "
+                     f"shares and funds ({dividend_report['corrected']} corrected from pounds to pence); the FTSE 100 tracker "
+                     f"had {bench_paid} payments.")
+    print("  " + dividend_text)
     close = close.loc[market.dropna().index.min():]
     open_ = open_.reindex(close.index)
     print(f"  {len(shares)} shares with data; {close.index[0].date()} to {close.index[-1].date()}")
@@ -421,7 +473,8 @@ def run(args) -> int:
     last = close.index[-1]
     curves = {name: r.values for name, r in results.items()}
     if bench_close is not None and bench_close.notna().any():
-        curves["FTSE 100 (tracker fund, with dividends)"] = buy_and_hold(bench_open, bench_close, first, 1000.0)
+        label = "FTSE 100 (tracker fund, with dividends)" if bench_paid else "FTSE 100 (tracker fund, price only: no dividend data)"
+        curves[label] = buy_and_hold(bench_open, bench_close, first, 1000.0)
     curves["Every share on the list, equally (before costs)"] = equal_weight_everything(close, first, last, 1000.0)
 
     summary = pd.DataFrame([measures(name, values, results.get(name)) for name, values in curves.items()])
@@ -454,7 +507,7 @@ def run(args) -> int:
     picks_note = (f"Ranking as at {close.index[-1].date()} (the model itself only trades on the last trading day of each month). "
                   f"FTSE 100 versus its 200-day average: {filter_state}.")
     generated = datetime.now(sc.UK_TZ).strftime("%Y-%m-%d %H:%M UK time")
-    book = build_workbook(summary, yearly, curve_frame, trades, holdings, picks, picks_note, generated, names)
+    book = build_workbook(summary, yearly, curve_frame, trades, holdings, picks, picks_note, generated, names, dividend_text)
     saved = sc.save_workbook(book, Path(args.out))
     pd.set_option("display.width", 220)
     print(summary.to_string(index=False))

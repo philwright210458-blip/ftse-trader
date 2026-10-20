@@ -71,6 +71,15 @@ class MomentumTests(unittest.TestCase):
         expected = [100.0, 101.0, 102.0, 103.0, 104.0, np.nan, 105.0, 106.0]
         np.testing.assert_allclose(fixed["X.L"].to_numpy(), expected)
 
+    def test_dividends_added_back_and_pounds_fixed(self):
+        index = pd.bdate_range("2020-01-01", periods=4)
+        close = pd.DataFrame({"P.L": [100.0, 100.0, 98.0, 98.0], "Q.L": [500.0, 500.0, 490.0, 490.0]}, index=index)
+        paid = pd.DataFrame({"P.L": [0.0, 0.0, 2.0, 0.0], "Q.L": [0.0, 0.0, 0.10, 0.0]}, index=index)   # Q: 10p in pounds
+        _, adjusted, report = mm.with_dividends(close.copy(), close, paid)
+        self.assertAlmostEqual(adjusted["P.L"].iloc[2] / adjusted["P.L"].iloc[1], 1.0)   # no loss on the ex-date
+        self.assertAlmostEqual(adjusted["Q.L"].iloc[1], 500 * (1 - 10 / 500))
+        self.assertEqual(report, {"with_dividends": 2, "corrected": 1})
+
     def test_calendar_years(self):
         values = pd.Series([100.0, 110.0, 121.0], index=pd.to_datetime(["2020-06-30", "2020-12-31", "2021-12-31"]))
         years = mm.calendar_years(values)
@@ -88,7 +97,7 @@ class MomentumTests(unittest.TestCase):
             universe.write_text("company,epic,yahoo_ticker,index,type\n" + lines + "\n")
             out = Path(folder) / "m.xlsx"
             args = SimpleNamespace(universe=str(universe), exclude_trusts=True, limit=None, start="2011-01-01", out=str(out))
-            with mock.patch.object(mm, "download", return_value=(open_, close)):
+            with mock.patch.object(mm, "download", return_value=(open_, close, pd.DataFrame(0.0, index=close.index, columns=close.columns))):
                 self.assertEqual(mm.run(args), 0)
             book = openpyxl.load_workbook(out)
             self.assertEqual(book.sheetnames, ["Summary", "Each year", "Value over time", "Trades", "Holdings and picks now"])

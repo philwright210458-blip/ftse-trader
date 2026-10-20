@@ -109,13 +109,14 @@ def download(tickers: list[str], start: str, chunk: int = 40,
     return frames[0], frames[1], frames[2].fillna(0.0)
 
 
-def with_dividends(open_: pd.DataFrame, close: pd.DataFrame, dividends: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
-    """Total-return prices: earlier prices are scaled down by each dividend, as if it were reinvested.
+def corrected_dividends(close: pd.DataFrame, dividends: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Dividends per share in the same units as the price, with ex-dates on the price's dates.
 
     A payment worth less than 0.2% of the share price that becomes 0.2%-15% when multiplied by 100 is
-    taken to be recorded in pounds against a price in pence, and is corrected."""
-    open_, close = open_.copy(), close.copy()
-    report = {"with_dividends": 0, "corrected": 0}
+    taken to be recorded in pounds against a price in pence, and is corrected. Returns (dividends,
+    number of shares corrected)."""
+    result = pd.DataFrame(0.0, index=close.index, columns=close.columns)
+    corrected = 0
     for ticker in close.columns:
         if ticker not in dividends.columns:
             continue
@@ -123,20 +124,34 @@ def with_dividends(open_: pd.DataFrame, close: pd.DataFrame, dividends: pd.DataF
         paid = paid[paid > 0]
         if paid.empty:
             continue
-        report["with_dividends"] += 1
         before = close[ticker].ffill().shift(1)
-        factor = pd.Series(1.0, index=close.index)
         fixed_any = False
         for stamp, amount in paid.items():
             price = before.get(stamp)
             if not (isinstance(price, float) and math.isfinite(price) and price > 0):
                 continue
-            share = amount / price
-            if share < 0.002 and 0.002 <= share * 100 <= 0.15:
-                share, fixed_any = share * 100, True
-            if 0 < share < 0.5:
-                factor[close.index < stamp] *= 1 - share
-        report["corrected"] += int(fixed_any)
+            if amount / price < 0.002 and 0.002 <= amount * 100 / price <= 0.15:
+                amount, fixed_any = amount * 100, True
+            if 0 < amount / price < 0.5:
+                result.at[stamp, ticker] = amount
+        corrected += int(fixed_any)
+    return result, corrected
+
+
+def with_dividends(open_: pd.DataFrame, close: pd.DataFrame, dividends: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """Total-return prices: earlier prices are scaled down by each dividend, as if it were reinvested."""
+    open_, close = open_.copy(), close.copy()
+    paid, corrected = corrected_dividends(close, dividends)
+    report = {"with_dividends": int((dividends.reindex(columns=close.columns).fillna(0) > 0).any().sum()),
+              "corrected": corrected}
+    for ticker in close.columns:
+        payments = paid[ticker][paid[ticker] > 0]
+        if payments.empty:
+            continue
+        before = close[ticker].ffill().shift(1)
+        factor = pd.Series(1.0, index=close.index)
+        for stamp, amount in payments.items():
+            factor[close.index < stamp] *= 1 - amount / before[stamp]
         close[ticker] = close[ticker] * factor
         if ticker in open_.columns:
             open_[ticker] = open_[ticker] * factor

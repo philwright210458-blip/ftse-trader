@@ -1,7 +1,7 @@
 # FTSE Outcomes: scores past ideas and updates the mock trades. Started at 17:05
 # UK time (Mon-Fri) by a cron-job.org timer. Safe to run by hand at any time: it
 # only resolves ideas whose holding period has finished, and remembers what it
-# has already done.
+# has already done. It also updates the momentum paper trader (ftse_momentum_live.py).
 
 name: FTSE Outcomes
 
@@ -37,12 +37,21 @@ jobs:
       - name: Run outcome tracker
         run: python -u ftse_outcomes.py
 
+      # Claude's monthly momentum model, paper-traded forward (ftse_momentum_live.py).
+      # Decides after the close on the last trading day of each month and fills at the
+      # next morning's open; catches up if a run is missed. A failure here never stops
+      # the outcome tracker's results from being saved.
+      - name: Update momentum paper trader
+        continue-on-error: true
+        run: python -u ftse_momentum_live.py
+
       - name: Save results to the repo
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
           git add --all scan_data
           git add --all -- ftse_outcomes.xlsx 2>/dev/null || true
+          git add --all -- ftse_momentum_live.xlsx 2>/dev/null || true
           if git diff --cached --quiet; then echo "Nothing new to save."; exit 0; fi
           git commit -m "Outcomes $(TZ=Europe/London date '+%Y-%m-%d %H:%M')"
           for attempt in 1 2 3; do

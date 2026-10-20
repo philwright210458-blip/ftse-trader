@@ -45,6 +45,29 @@ class BacktestTests(unittest.TestCase):
                                "direction": ["Long", "Short", "Long", "Long"], "conflict": [False, True, False, False]})
         self.assertEqual(bt.two_way_keys(setups), {("r1", "A")})
 
+    def _bars(self, last):
+        index = pd.date_range("2026-09-01 08:00", periods=20, freq="15min", tz=sc.UK_TZ)
+        rows = [(100.0, 100.5, 99.5, 100.0)] * 19 + [last]            # typical candle range 1.0
+        return pd.DataFrame(rows, columns=["open", "high", "low", "close"], index=index)
+
+    def _row(self, setup, direction, data):
+        return pd.DataFrame({"ticker": ["A.L"], "data_time": [data.index[-1].isoformat()], "setup": [setup],
+                             "direction": [direction], "zone_low": [99.0], "zone_high": [99.2]})
+
+    def test_reclaim_needs_half_atr_beyond_edge(self):
+        far = self._bars((99.0, 99.8, 98.9, 99.6))      # close 0.6 above zone low 99.0, ATR 1.0
+        near = self._bars((99.0, 99.4, 98.9, 99.3))     # close only 0.3 above
+        self.assertTrue(bt.confirmation_flags(self._row("Breakout", "Long", far), {"A.L": far})["reclaim_confirmed"].iloc[0])
+        self.assertFalse(bt.confirmation_flags(self._row("Breakout", "Long", near), {"A.L": near})["reclaim_confirmed"].iloc[0])
+
+    def test_range_needs_rejection_candle(self):
+        pin = self._bars((99.6, 99.8, 98.9, 99.7))      # long lower wick into the zone, closes near the high
+        weak = self._bars((99.7, 99.8, 99.0, 99.1))     # touches the zone but closes near the low
+        small = self._bars((99.3, 99.4, 99.1, 99.35))   # right shape but only 0.3 ATR tall
+        flags = [bt.confirmation_flags(self._row("Range", "Long", d), {"A.L": d})["range_confirmed"].iloc[0]
+                 for d in (pin, weak, small)]
+        self.assertEqual(flags, [True, False, False])
+
     def test_sma_uses_only_earlier_days(self):
         index = pd.date_range("2026-01-01", periods=60, freq="D")
         closes = pd.Series(range(60), index=index, dtype=float)
@@ -74,7 +97,7 @@ class BacktestTests(unittest.TestCase):
         summary = pd.DataFrame(list(book["Summary"].iter_rows(min_row=7, values_only=True)))
         summary.columns = summary.iloc[0]
         summary = summary.iloc[1:]
-        self.assertEqual(len(summary), 30)        # 9 variants x 3 scenarios + 3 trend-pullback rows
+        self.assertEqual(len(summary), 42)        # 13 variants x 3 scenarios + 3 trend-pullback rows
         trades = pd.DataFrame(list(book["Trades (baseline)"].iter_rows(values_only=True)))
         trades.columns = trades.iloc[0]
         done = trades.iloc[1:].dropna(subset=["After costs (£)"])

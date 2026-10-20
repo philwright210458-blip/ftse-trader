@@ -20,6 +20,8 @@ Side-by-side variants (ideas register):
   * trend filter        buys only above the 50-day average close, sells only below (idea 1)
   * stop at least 1%    stop moved out to at least 1% from entry, target kept at 3x the stop distance (idea 8)
   * stop at least 2%    the same with 2%
+  * no two-way levels   skip a share when the same scan saw both a buy and a sell on it
+  * no failed-break sells  drop "Breakout" sells (price pushed above a level, then fell back)
 
 Run on a machine that can reach Yahoo (e.g. the GitHub "FTSE Backtest" workflow):
 
@@ -56,7 +58,8 @@ FULL_DELAY = pd.Timedelta(minutes=3)    # live full scans finish about 3 minutes
 WATCH_DELAY = pd.Timedelta(minutes=2)   # live watch scans finish about 1-2 minutes after
 DEALING_PCT, STAMP_PCT = 0.10, 0.5
 VARIANTS = ["Baseline (live rules)", "Trend filter (50-day average)", "Stop at least 1%", "Stop at least 2%",
-            "Trend + 50-day slope", "Trend + slope + 20-EMA momentum"]
+            "Trend + 50-day slope", "Trend + slope + 20-EMA momentum",
+            "No two-way levels", "No failed-break sells", "No two-way levels + no failed-break sells"]
 SLOPE_DAYS = 10      # the 50-day average must be higher (buys) or lower (sells) than it was this many trading days earlier
 EMA_SPAN, EMA_LOOKBACK = 20, 4   # 20-period EMA on 15-minute candles, rising/falling over the last 4 candles (1 hour)
 PULLBACK = "Trend pullback (new strategy)"
@@ -211,6 +214,14 @@ def with_keys(setups: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
+def two_way_keys(setups: pd.DataFrame) -> set:
+    """(scan, share) pairs where one scan saw both a buy and a sell, counting the weaker 'conflict' setups too."""
+    if setups.empty:
+        return set()
+    directions = setups.groupby(["run_time", "ticker"])["direction"].nunique()
+    return set(directions[directions > 1].index)
+
+
 def live_picks(candidates: pd.DataFrame, per_day: int = 3) -> pd.DataFrame:
     """Same rule as ftse_live_mock: in scan order, best score first, up to 3 a day, one per share."""
     chosen = []
@@ -332,7 +343,8 @@ def build_workbook(summary: pd.DataFrame, daily: pd.DataFrame, trades: pd.DataFr
                 "only below. Stop at least 1% / 2% = stops moved further away (target still 3x the stop distance). Trend + 50-day slope = "
                 "as Trend filter, and the 50-day average must also be rising for buys (falling for sells) compared with 10 trading days "
                 "earlier. Trend + slope + 20-EMA momentum = as that, and on the 15-minute chart the price must be above a rising "
-                "20-period average for buys (below a falling one for sells) at the signal. Scenarios: Every "
+                "20-period average for buys (below a falling one for sells) at the signal. No two-way levels = skip a share when the "
+                "same scan also saw the opposite trade on it. No failed-break sells = drop 'Breakout' sells. Scenarios: Every "
                 "idea = all ideas at first sighting; Top 2 at 10:30 = your main mock trader; Live: first 3 triggers = the live mock trader.")
     note(ws, 5, "Trend pullback (new strategy, idea 17): a different engine, not a filter. Daily trend: price above a rising 50-day "
                 "average (sells: below a falling one). On 15-minute candles the 20-period average must be rising with the 9-period above "
@@ -401,6 +413,7 @@ def run(args) -> int:
         print("No setups found in the replayed period.")
         return 1
     now = max(data.index[-1] for data in intraday.values()) + pd.Timedelta(minutes=minutes)
+    two_way = two_way_keys(setups)
     candidates = with_keys(setups)
     candidates = candidates[(~candidates["conflict"]) & (candidates["run_time"].str[11:16] <= "15:30")]
 
@@ -434,9 +447,13 @@ def run(args) -> int:
     slope = candidates[pd.Series(slope_ok, index=candidates.index)]
     momentum = candidates[pd.Series(momentum_ok, index=candidates.index)]
 
+    one_way = candidates[~candidates.set_index(["run_time", "ticker"]).index.isin(two_way)]
+    failed_sell = (candidates["setup"] == "Breakout") & (candidates["direction"] == "Short")
     variant_sets = {VARIANTS[0]: (candidates, None), VARIANTS[1]: (trend, None),
                     VARIANTS[2]: (candidates, 1.0), VARIANTS[3]: (candidates, 2.0),
-                    VARIANTS[4]: (slope, None), VARIANTS[5]: (momentum, None)}
+                    VARIANTS[4]: (slope, None), VARIANTS[5]: (momentum, None),
+                    VARIANTS[6]: (one_way, None), VARIANTS[7]: (candidates[~failed_sell], None),
+                    VARIANTS[8]: (one_way[~((one_way["setup"] == "Breakout") & (one_way["direction"] == "Short"))], None)}
     summary, daily_cols, baseline_trades = [], {}, []
     for variant, (frame, min_stop) in variant_sets.items():
         print(f"Scoring: {variant}...")

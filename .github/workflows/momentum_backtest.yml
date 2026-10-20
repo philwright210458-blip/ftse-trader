@@ -1,0 +1,63 @@
+# FTSE Momentum Backtest: Claude's model (monthly momentum on FTSE 350 shares,
+# daily prices since 2010; see ftse_momentum.py). Run it by hand from the
+# Actions tab. It saves ftse_momentum_backtest.xlsx to the repo and doesn't
+# touch the live scans.
+
+name: FTSE Momentum Backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "First month the model may trade (YYYY-MM-DD)"
+        required: false
+        default: "2011-01-01"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftse-backtest
+  cancel-in-progress: false
+
+jobs:
+  backtest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install packages
+        run: pip install -r requirements.txt
+
+      - name: Run backtest
+        env:
+          START: ${{ inputs.start }}
+        run: python -u ftse_momentum.py --exclude-trusts --start "${START:-2011-01-01}" --out ftse_momentum_backtest.xlsx
+
+      - name: Make results downloadable
+        uses: actions/upload-artifact@v4
+        with:
+          name: ftse-momentum-backtest-${{ github.run_number }}
+          path: ftse_momentum_backtest.xlsx
+
+      - name: Save results to the repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add ftse_momentum_backtest.xlsx
+          if git diff --cached --quiet; then echo "Nothing new to save."; exit 0; fi
+          git commit -m "Momentum backtest $(TZ=Europe/London date '+%Y-%m-%d %H:%M')"
+          for attempt in 1 2 3; do
+            git pull --rebase && git push && exit 0
+            sleep 15
+          done
+          echo "::error::Could not save results to the repo after 3 attempts."
+          exit 1

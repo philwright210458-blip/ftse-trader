@@ -65,7 +65,8 @@ VARIANTS = ["Baseline (live rules)", "Trend filter (50-day average)", "Stop at l
             "Trend + 50-day slope", "Trend + slope + 20-EMA momentum",
             "No two-way levels", "No failed-break sells", "No two-way levels + no failed-break sells",
             "Baseline, target reset at actual entry", "Reclaims need a 0.5 ATR close beyond the edge",
-            "Range trades need a rejection candle", "Both confirmations", "Live rules from 21 Oct (all three)"]
+            "Range trades need a rejection candle", "Both confirmations", "Live rules from 21 Oct (all three)",
+            "Reclaims need a 0.25 ATR close beyond the edge", "Reclaims need a 0.75 ATR close beyond the edge"]
 # Phil's confirmation rules (20 Oct), each set once before testing. ATR = the scanner's typical candle range
 # (median true range of the last 14 candles). Entry stays at the next candle's open after the confirming
 # candle; the target is then reset to 3x the stop distance measured from that actual entry.
@@ -233,7 +234,7 @@ def confirmation_flags(candidates: pd.DataFrame, intraday) -> pd.DataFrame:
     """Per candidate: does its signal candle pass Phil's reclaim displacement / range rejection rules?
 
     Uses only the signal candle and the candles before it."""
-    reclaim_ok, range_ok = [], []
+    reclaim_ok, range_ok, reclaim_distance = [], [], []
     for _, row in candidates.iterrows():
         data = intraday.get(row["ticker"])
         stamp = out.market_stamp(row["data_time"])
@@ -241,6 +242,7 @@ def confirmation_flags(candidates: pd.DataFrame, intraday) -> pd.DataFrame:
         if visible is None or len(visible) < 15:
             reclaim_ok.append(False)
             range_ok.append(False)
+            reclaim_distance.append(float("nan"))
             continue
         atr = sc.typical_true_range(visible)
         bar = visible.iloc[-1]
@@ -249,6 +251,7 @@ def confirmation_flags(candidates: pd.DataFrame, intraday) -> pd.DataFrame:
         low_edge, high_edge = float(row["zone_low"]), float(row["zone_high"])
         displacement = RECLAIM_DISPLACEMENT_ATR * atr
         reclaim_ok.append(atr > 0 and (c >= low_edge + displacement if long else c <= high_edge - displacement))
+        reclaim_distance.append(((c - low_edge) if long else (high_edge - c)) / atr if atr > 0 else float("nan"))
         span = h - l
         if atr <= 0 or span <= 0 or span < REJECTION_MIN_RANGE_ATR * atr:
             range_ok.append(False)
@@ -258,7 +261,7 @@ def confirmation_flags(candidates: pd.DataFrame, intraday) -> pd.DataFrame:
         else:
             wick, location, touched = (h - max(o, c)) / span, (h - c) / span, h >= low_edge
         range_ok.append(touched and wick >= REJECTION_WICK_SHARE and location >= REJECTION_CLOSE_LOCATION)
-    return candidates.assign(reclaim_confirmed=reclaim_ok, range_confirmed=range_ok)
+    return candidates.assign(reclaim_confirmed=reclaim_ok, range_confirmed=range_ok, reclaim_atr_distance=reclaim_distance)
 
 
 def two_way_keys(setups: pd.DataFrame) -> set:
@@ -536,7 +539,9 @@ def run(args) -> int:
     confirmed = (~is_reclaim | flagged["reclaim_confirmed"]) & (~is_range | flagged["range_confirmed"])
     not_two_way = ~candidates.set_index(["run_time", "ticker"]).index.isin(two_way)
     variant_sets[VARIANTS[13]] = (candidates[confirmed & not_two_way], None)   # same as the live scanner from 21 Oct
-    reset = set(VARIANTS[9:13])
+    for name, k in ((VARIANTS[14], 0.25), (VARIANTS[15], 0.75)):     # sensitivity check around 0.5 (Phil, 20 Oct)
+        variant_sets[name] = (candidates[~is_reclaim | (flagged["reclaim_atr_distance"] >= k)], None)
+    reset = set(VARIANTS[9:13]) | {VARIANTS[14], VARIANTS[15]}
     summary, daily_cols, baseline_trades = [], {}, []
     for variant, (frame, min_stop) in variant_sets.items():
         print(f"Scoring: {variant}...")

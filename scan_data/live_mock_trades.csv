@@ -1,0 +1,4 @@
+day,signal_time,data_time,mode,trade_no,company,ticker,index,setup,direction,score,entry,stop,target,risk_pct,key
+2026-10-20,2026-10-20 10:04:05,2026-10-20T09:45:00+01:00,full,1,London Stock Exchange Group,LSEG.L,FTSE 100,Breakout,Short,84.5,8692.0,8732.75,8569.75,0.469,2026-10-20T09:45:00+01:00|LSEG.L|Short|2026-10-20 10:04:05|full
+2026-10-20,2026-10-20 10:04:05,2026-10-20T09:45:00+01:00,full,2,Drax Group,DRX.L,FTSE 250,Range,Long,84.5,787.0,784.66,794.03,0.298,2026-10-20T09:45:00+01:00|DRX.L|Long|2026-10-20 10:04:05|full
+2026-10-20,2026-10-20 10:04:05,2026-10-20T09:45:00+01:00,full,3,Rosebank Industries,ROSE.L,FTSE 250,Range,Long,83.2,306.0,303.76,312.73,0.733,2026-10-20T09:45:00+01:00|ROSE.L|Long|2026-10-20 10:04:05|full

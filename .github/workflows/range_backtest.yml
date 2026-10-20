@@ -16,6 +16,14 @@ on:
         description: "Only the first N shares (leave blank for all)"
         required: false
         default: ""
+      interval:
+        description: "Candle size: 15m (60 days of history) or 1h (about 2 years)"
+        required: false
+        default: "15m"
+      index_only:
+        description: "Test only the FTSE 100 index"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -45,23 +53,33 @@ jobs:
         env:
           LIMIT: ${{ inputs.limit }}
           HOLD: ${{ inputs.hold_days }}
+          INTERVAL: ${{ inputs.interval }}
+          INDEX_ONLY: ${{ inputs.index_only }}
         run: |
           if [ -z "$HOLD" ]; then HOLD=3; fi
+          if [ -z "$INTERVAL" ]; then INTERVAL=15m; fi
+          if [ "$INTERVAL" = "15m" ]; then PERIOD=60d; else PERIOD=729d; fi
           EXTRA=""
+          OUT=ftse_range_v2_backtest
           if [ -n "$LIMIT" ]; then EXTRA="--limit $LIMIT"; fi
-          python -u ftse_range_backtest.py --exclude-trusts --horizon "$HOLD" $EXTRA --out ftse_range_v2_backtest.xlsx
+          if [ "$INDEX_ONLY" = "true" ]; then EXTRA="$EXTRA --index-only"; OUT="${OUT}_index"; fi
+          if [ "$INTERVAL" != "15m" ]; then OUT="${OUT}_${INTERVAL}"; fi
+          if [ "$HOLD" != "3" ]; then OUT="${OUT}_hold${HOLD}d"; fi
+          OUT="${OUT}.xlsx"
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+          python -u ftse_range_backtest.py --exclude-trusts --interval "$INTERVAL" --period "$PERIOD" --horizon "$HOLD" $EXTRA --out "$OUT"
 
       - name: Make results downloadable
         uses: actions/upload-artifact@v4
         with:
-          name: ftse-range-v2-backtest
-          path: ftse_range_v2_backtest.xlsx
+          name: ftse-range-v2-backtest-${{ github.run_number }}
+          path: ${{ env.OUT }}
 
       - name: Save results to the repo
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
-          git add ftse_range_v2_backtest.xlsx
+          git add "$OUT"
           if git diff --cached --quiet; then echo "Nothing new to save."; exit 0; fi
           git commit -m "Range v2 backtest $(TZ=Europe/London date '+%Y-%m-%d %H:%M')"
           for attempt in 1 2 3; do

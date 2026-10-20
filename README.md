@@ -1,67 +1,48 @@
-# FTSE Research
+# FTSE Trader
 
-A browser workspace for yesterday's FTSE movers, today's completed candles and automatic **paper** trades. The Python collector runs independently of the browser, preserves a durable research journal and publishes authenticated snapshots. The original scanners and spreadsheet exports remain available.
+Phil's paper-trading research on FTSE 100 and FTSE 250 shares. **Nothing here places real orders. It is a test of screening models, not trading advice.**
 
-This branch is for review. **No live schedules have been changed, no Site has been deployed and no broker orders are supported.** The collector configuration starts disabled.
+## What runs automatically (Mon-Fri, on GitHub)
 
-## Try it without market access
+The timers are on cron-job.org; each one starts a GitHub workflow.
 
-Python 3.12 and Node 22 are the tested baseline. Run these commands from the repository root:
+| Time (UK) | Workflow | What it does | Results |
+| --- | --- | --- | --- |
+| 10:00 | FTSE Full Scan (`full_scan.yml`) | Scans every share for range and breakout setups | `ftse_scan_latest.xlsx`, `scan_data/` |
+| 10:16, then every 15 min | FTSE Watch (`watch.yml`) | Re-checks the shortlist; makes live mock trades (first 3 a day) | `ftse_scan_latest.xlsx`, `scan_data/live_mock_trades.csv` |
+| 17:05 | FTSE Outcomes (`outcomes.yml`) | Scores the day's ideas and mock trades; also runs the momentum paper trader | `ftse_outcomes.xlsx`, `ftse_momentum_live.xlsx` |
+| after each scan | Publish scans (`publish_scans.yml`) | Sends scan results to the shared dashboard | (dashboard) |
 
-```sh
-python -m venv .venv
-. .venv/bin/activate
+Workflows run by hand from the Actions tab: **FTSE Backtest**, **FTSE Range v2 Backtest** and **FTSE Momentum Backtest**. They save their workbooks in `results/`.
+
+## The models
+
+| Model | Code | Status |
+| --- | --- | --- |
+| 15-minute range and breakout scanner (the live one) | `ftse_trade_scanner.py`, `ftse_live_mock.py`, `ftse_outcomes.py` | Running; backtest negative after costs |
+| Trend pullback (idea 17) | `ftse_pullback.py` (tested by `ftse_backtest.py`) | Rejected |
+| Range model version 2 (Patrick Nill's method, rebuilt) | `ftse_range_v2.py`, `ftse_range_backtest.py` | Rejected on shares and the index |
+| Claude's model: monthly momentum | `ftse_momentum.py` (backtest), `ftse_momentum_live.py` (paper trading from 30 Oct 2026) | Paper trading |
+
+## Folders and files
+
+- `ftse_universe.csv`: the 350 shares (the `type` column marks investment trusts).
+- `scan_data/`: the live history (setups, runs, outcomes, live mock trades, momentum orders). Don't edit by hand.
+  `outcomes.csv` is the old version 1 results, kept for reference and the dashboard; `outcomes.v2.csv` is the corrected one.
+- `results/`: backtest workbooks.
+- `tests/`: automatic checks (`python -m unittest discover -s tests`). They run on every pull request.
+- `docs/`: `IDEAS.md` (copy of the ideas register; the Claude Doc is the master), `LEGACY_SCANNER.md` (the scanner guide and its rules), and the research app guides.
+- Research app (built by Ashley; not switched on): `ftse_research/`, `ftse_research_cli.py`, `ftse_scheduler.py`, `config/`, `deploy/`, `Dockerfile`, `.env.example` and `dashboard/`. See [docs/RESEARCH_APP.md](docs/RESEARCH_APP.md). `dashboard/` and `publish_scans.py` also run the published scans site.
+- `ftse_sessions.py`: London trading days and hours, used by everything.
+- `requirements.txt` / `requirements.lock`: the Python packages (exact versions in the lock file).
+
+## Running on a computer
+
+```
 pip install -r requirements.txt
-python ftse_research_cli.py demo --database runtime/demo.sqlite --out runtime/demo-snapshot.json
-node dashboard/server.mjs --demo
+python ftse_trade_scanner.py --exclude-trusts        # full scan
+python ftse_trade_scanner.py --watch                 # re-check the shortlist
+python ftse_outcomes.py                              # score ideas, update ftse_outcomes.xlsx
 ```
 
-Open `http://127.0.0.1:8787/?demo=1` for the labelled interface example. The generated Python demo is a separate deterministic, fictional research ledger; it can be sent through the actual authenticated update API as described in [Operations](docs/OPERATIONS.md). Opening the ordinary `/` URL shows no data until an update is received. The local interface fixture is not included in the hosted Worker. Labelled fictional replay scenarios are included behind its normal private-reader checks.
-
-The demo is for reviewing behaviour and presentation. Its results are not observed share performance. Synthetic and market-paper journals cannot be mixed.
-
-## What is included
-
-- Morning watch with previous-session risers/fallers, opening gaps, completed-candle direction and visible data freshness.
-- Share detail with a candlestick chart, exact records and setup explanations.
-- Virtual portfolio, explicit costs and capital limits, rejected entries and realised results.
-- Durable SQLite evidence, authenticated hosted snapshot storage, archived snapshots and CSV exports.
-- A simpler outcome workbook: a pound profit/loss summary, separate strategy comparison and grouped breakdowns.
-- Session-aware scheduling for London holidays, daylight saving and early closes, with duplicate and missed-run protection.
-- Actual-engine session replays with stepping, playback and local recorded-file support, plus an explanatory decision journal and daily report.
-
-The user-selected defaults are **£100 notional per simulated position**, a **5% initial configurable movers filter**, and monitoring for the **whole trading session**. The sample £1,000 virtual account, three-position limit and evaluation thresholds are proposed paper-research assumptions. They are editable in `config/research.json`; they are not live-money recommendations. Synthetic shorts are disabled by default because borrow availability and charges have not been established.
-
-## Scheduling without writing cron jobs
-
-`ftse_research_cli.py service` is the supplied scheduler. On a persistent Linux host it prepares the universe fifteen minutes before the exchange opens, checks at the open, then processes completed fifteen-minute bars after a ninety-second publication allowance. A final resolution runs fifteen minutes after the actual session close. These are configurable timings, not a guarantee of provider freshness.
-
-The service calculates UK market times using the exchange calendar. It locks the journal against overlapping collectors and records missed windows instead of inventing earlier trades. Failed jobs remain recorded and do not retry indefinitely. Neither a browser refresh nor your computer staying awake is required once the separate host is configured.
-
-```sh
-python ftse_research_cli.py plan --at 2026-10-16T16:46:00+01:00
-python ftse_research_cli.py tick
-```
-
-The second command reports `disabled` with the shipped configuration and makes no market requests. The existing three GitHub workflows are unchanged. The only new workflow runs offline pull-request checks; it has **no cron trigger**. Hosting activation is a separate step after review. [Full setup and recovery instructions](docs/OPERATIONS.md).
-
-## Checks
-
-```sh
-python -m unittest discover -s tests -v
-node --test dashboard/tests/*.test.mjs
-node dashboard/scripts/build.mjs
-python tests/report_fixture.py
-```
-
-The report fixture is deliberately synthetic and is written to `runtime/ftse_outcomes_review.xlsx`. The original tracked workbooks and CSVs are retained unchanged. The corrected legacy outcome tracker uses a separate versioned cache, `outcomes.v2.csv`, and will not reuse old flawed results as corrected observations.
-
-## Boundaries and next steps
-
-The implementation provides the collection, scheduling, dashboard and paper-evaluation machinery. Hosted two-user access, provider latency and a forward market pilot still need direct operational verification. A short successful demo or test suite does not prove profitability. The aspiration of 1% each day is not a forecast and never forces an entry.
-
-Read [Implementation status](docs/IMPLEMENTATION_STATUS.md), [Operations](docs/OPERATIONS.md), [Data and simulation rules](docs/RESEARCH_MODEL.md) and the [original scanner guide](docs/LEGACY_SCANNER.md). The approved future direction is paper research first, with any decision about a separate live execution service deferred. ChatGPT Sites is considered for the research interface; no financial transaction capability is added to it.
-
-A ready-to-inspect [synthetic workbook example](docs/examples/ftse_outcomes_synthetic.xlsx) is included in the pull request. It illustrates the layout and mixed result states without presenting old cached numbers as corrected market performance.
-
-Open `http://127.0.0.1:8787/?demo=1#replay` to try the new replay. The [replay and report guide](docs/REPLAY_AND_REPORTS.md) explains the fictional scenarios, recorded observations, downloads and review checks.
+Yahoo's prices can be up to 15 minutes behind; check a share against your broker before relying on any price.

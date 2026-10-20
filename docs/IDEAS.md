@@ -34,4 +34,4 @@ Every idea for improving the model goes here, so nothing gets lost. Ideas are te
 - **One change at a time:** test ideas side by side first, and adopt only those that clearly improve profit per £100 after all costs, across enough trades and days.
 - **Backtests (19 Oct):** ideas 1, 2, 8 and 17 were tested on 45 days of history with `ftse_backtest.py`; results are in `ftse_backtest.xlsx`, `ftse_backtest_hold2d.xlsx` and `ftse_backtest_hold5d.xlsx`.
 
-See also: [Model review and next steps (17 Oct 2026)](MODEL_REVIEW_2026-10-17.md).
+See also the Claude Doc "FTSE Trader: how the current model works" (model description, comparison with the original video, and the version 2 and momentum results).

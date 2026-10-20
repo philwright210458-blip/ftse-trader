@@ -23,7 +23,7 @@ Side-by-side variants (ideas register):
 
 Run on a machine that can reach Yahoo (e.g. the GitHub "FTSE Backtest" workflow):
 
-    python ftse_backtest.py --out ftse_backtest.xlsx
+    python ftse_backtest.py --out results/ftse_backtest.xlsx
 
 Limits: Yahoo keeps about 60 days of 15-minute candles, so the earliest days
 have less history for finding zones than the live scanner has (the first
@@ -504,7 +504,7 @@ def main() -> None:
     parser.add_argument("--exclude-trusts", action="store_true")
     parser.add_argument("--limit", type=int, default=None, help="Only the first N shares (for a quick test)")
     parser.add_argument("--delay", type=float, default=0.2)
-    parser.add_argument("--out", default="ftse_backtest.xlsx")
+    parser.add_argument("--out", default="results/ftse_backtest.xlsx")
     sys.exit(run(parser.parse_args()))
 
 

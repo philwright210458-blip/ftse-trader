@@ -1,6 +1,6 @@
 """Backtest for range model version 2 (ftse_range_v2.py) on FTSE shares and the FTSE 100 index.
 
-    python ftse_range_backtest.py --exclude-trusts --out ftse_range_v2_backtest.xlsx
+    python ftse_range_backtest.py --exclude-trusts --out results/ftse_range_v2_backtest.xlsx
 
 Shares: every £100 trade pays 10p dealing, plus 50p stamp duty on buys.
 FTSE 100 index (^FTSE, as by spread bet or CFD): 2p spread per £100 and
@@ -228,7 +228,7 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--index-only", action="store_true", help="Test only the FTSE 100 index")
     parser.add_argument("--delay", type=float, default=0.2)
-    parser.add_argument("--out", default="ftse_range_v2_backtest.xlsx")
+    parser.add_argument("--out", default="results/ftse_range_v2_backtest.xlsx")
     sys.exit(run(parser.parse_args()))
 
 

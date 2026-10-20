@@ -22,6 +22,10 @@ Side-by-side variants (ideas register):
   * stop at least 2%    the same with 2%
   * no two-way levels   skip a share when the same scan saw both a buy and a sell on it
   * no failed-break sells  drop "Breakout" sells (price pushed above a level, then fell back)
+  * Phil's confirmations (20 Oct): reclaims need a close at least 0.5 ATR back across the edge;
+    range trades need a rejection candle (range >= 0.75 ATR, wick on the level side >= 40% of the candle,
+    close in the outer 40% away from the level). These variants, and a baseline control, reset the
+    target to 3x the stop distance from the actual fill price.
 
 Run on a machine that can reach Yahoo (e.g. the GitHub "FTSE Backtest" workflow):
 
@@ -59,7 +63,16 @@ WATCH_DELAY = pd.Timedelta(minutes=2)   # live watch scans finish about 1-2 minu
 DEALING_PCT, STAMP_PCT = 0.10, 0.5
 VARIANTS = ["Baseline (live rules)", "Trend filter (50-day average)", "Stop at least 1%", "Stop at least 2%",
             "Trend + 50-day slope", "Trend + slope + 20-EMA momentum",
-            "No two-way levels", "No failed-break sells", "No two-way levels + no failed-break sells"]
+            "No two-way levels", "No failed-break sells", "No two-way levels + no failed-break sells",
+            "Baseline, target reset at actual entry", "Reclaims need a 0.5 ATR close beyond the edge",
+            "Range trades need a rejection candle", "Both confirmations"]
+# Phil's confirmation rules (20 Oct), each set once before testing. ATR = the scanner's typical candle range
+# (median true range of the last 14 candles). Entry stays at the next candle's open after the confirming
+# candle; the target is then reset to 3x the stop distance measured from that actual entry.
+RECLAIM_DISPLACEMENT_ATR = 0.5     # reclaim close must be at least this far back across the zone edge
+REJECTION_MIN_RANGE_ATR = 0.75     # rejection candle's high-low range must be at least this
+REJECTION_WICK_SHARE = 0.4         # wick on the level's side must be at least this share of the candle's range
+REJECTION_CLOSE_LOCATION = 0.6     # close in the top 40% of the candle for buys (bottom 40% for sells)
 SLOPE_DAYS = 10      # the 50-day average must be higher (buys) or lower (sells) than it was this many trading days earlier
 EMA_SPAN, EMA_LOOKBACK = 20, 4   # 20-period EMA on 15-minute candles, rising/falling over the last 4 candles (1 hour)
 PULLBACK = "Trend pullback (new strategy)"
@@ -173,7 +186,8 @@ def run_scan(scan: Scan, companies, intraday, interval_min: int, max_stale: int 
              "company": s.company, "ticker": s.ticker, "index": s.index_label, "setup": s.setup_type,
              "direction": s.direction, "score": s.quality_score, "entry": round(s.entry, 4), "stop": round(s.stop, 4),
              "target": round(s.target, 4), "risk_pct": round(abs(s.entry - s.stop) / s.entry * 100, 4),
-             "touches": s.zone.touch_count, "conflict": s.conflict} for s in selected]
+             "touches": s.zone.touch_count, "zone_low": s.zone.low, "zone_high": s.zone.high,
+             "conflict": s.conflict} for s in selected]
     return run, rows
 
 
@@ -214,6 +228,38 @@ def with_keys(setups: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
+def confirmation_flags(candidates: pd.DataFrame, intraday) -> pd.DataFrame:
+    """Per candidate: does its signal candle pass Phil's reclaim displacement / range rejection rules?
+
+    Uses only the signal candle and the candles before it."""
+    reclaim_ok, range_ok = [], []
+    for _, row in candidates.iterrows():
+        data = intraday.get(row["ticker"])
+        stamp = out.market_stamp(row["data_time"])
+        visible = data[data.index <= stamp] if data is not None else None
+        if visible is None or len(visible) < 15:
+            reclaim_ok.append(False)
+            range_ok.append(False)
+            continue
+        atr = sc.typical_true_range(visible)
+        bar = visible.iloc[-1]
+        o, h, l, c = (float(bar[k]) for k in ("open", "high", "low", "close"))
+        long = row["direction"] == "Long"
+        low_edge, high_edge = float(row["zone_low"]), float(row["zone_high"])
+        displacement = RECLAIM_DISPLACEMENT_ATR * atr
+        reclaim_ok.append(atr > 0 and (c >= low_edge + displacement if long else c <= high_edge - displacement))
+        span = h - l
+        if atr <= 0 or span <= 0 or span < REJECTION_MIN_RANGE_ATR * atr:
+            range_ok.append(False)
+            continue
+        if long:
+            wick, location, touched = (min(o, c) - l) / span, (c - l) / span, l <= high_edge
+        else:
+            wick, location, touched = (h - max(o, c)) / span, (h - c) / span, h >= low_edge
+        range_ok.append(touched and wick >= REJECTION_WICK_SHARE and location >= REJECTION_CLOSE_LOCATION)
+    return candidates.assign(reclaim_confirmed=reclaim_ok, range_confirmed=range_ok)
+
+
 def two_way_keys(setups: pd.DataFrame) -> set:
     """(scan, share) pairs where one scan saw both a buy and a sell, counting the weaker 'conflict' setups too."""
     if setups.empty:
@@ -249,7 +295,10 @@ def widen(frame: pd.DataFrame, min_pct: float) -> pd.DataFrame:
     return result
 
 
-def score(frame: pd.DataFrame, intraday, horizon: int, now: pd.Timestamp, interval: str) -> pd.DataFrame:
+def score(frame: pd.DataFrame, intraday, horizon: int, now: pd.Timestamp, interval: str,
+          reset_target: bool = False) -> pd.DataFrame:
+    """Score trades. reset_target: once the fill price is known, put the target at 3x the stop distance
+    measured from the fill (the stop stays at the level the signal chose)."""
     rows = []
     minutes = sc.interval_minutes(interval)
     for _, row in frame.iterrows():
@@ -259,6 +308,13 @@ def score(frame: pd.DataFrame, intraday, horizon: int, now: pd.Timestamp, interv
         signal_close = out.market_stamp(row["data_time"]) + pd.Timedelta(minutes=minutes)
         available = max(signal_close, out.market_stamp(row["run_time"]))
         sim = out.simulate(row["direction"], float(row["stop"]), float(row["target"]), available, data, horizon, now, interval)
+        if reset_target and sim.fill is not None and math.isfinite(sim.fill):
+            risk = abs(sim.fill - float(row["stop"]))
+            if risk > 0:
+                target = sim.fill + 3 * risk if row["direction"] == "Long" else sim.fill - 3 * risk
+                row = row.copy()
+                row["target"] = round(target, 4)
+                sim = out.simulate(row["direction"], float(row["stop"]), target, available, data, horizon, now, interval)
         rows.append({**row.to_dict(), "status": sim.status, "outcome": sim.outcome, "fill": sim.fill,
                      "exit_price": sim.exit_price, "exit_time": sim.exit_time, "r_gross": sim.r_gross,
                      "fill_risk_pct": sim.fill_risk_pct})
@@ -272,6 +328,9 @@ def score(frame: pd.DataFrame, intraday, horizon: int, now: pd.Timestamp, interv
     result["costs_gbp"] = (DEALING_PCT + stamp).where(done).round(2)
     result["net_gbp"] = (gross - DEALING_PCT - stamp).where(done).round(2)
     return result
+
+
+SPLIT_DAY: str | None = None      # set by run(): first day of the second half of the replayed period
 
 
 def summary_row(variant: str, scenario: str, trades: pd.DataFrame) -> dict:
@@ -289,6 +348,10 @@ def summary_row(variant: str, scenario: str, trades: pd.DataFrame) -> dict:
         "Worst day (£)": by_day.min(), "Best day (£)": by_day.max(),
         "Buys: avg after costs (£)": done.loc[done["direction"] == "Long", "net_gbp"].mean(),
         "Sells: avg after costs (£)": done.loc[done["direction"] == "Short", "net_gbp"].mean(),
+        "Range: avg after costs (£)": done.loc[done["setup"] == "Range", "net_gbp"].mean() if "setup" in done else None,
+        "Reclaims: avg after costs (£)": done.loc[done["setup"] == "Breakout", "net_gbp"].mean() if "setup" in done else None,
+        "First half: avg after costs (£)": done.loc[done["day"] < SPLIT_DAY, "net_gbp"].mean() if SPLIT_DAY else None,
+        "Second half: avg after costs (£)": done.loc[done["day"] >= SPLIT_DAY, "net_gbp"].mean() if SPLIT_DAY else None,
         "Skipped (gapped past level)": int((trades["status"] == "skipped").sum()),
         "Not resolved (missing data)": int(trades["status"].isin(["nodata", "pending"]).sum()),
     }
@@ -344,7 +407,11 @@ def build_workbook(summary: pd.DataFrame, daily: pd.DataFrame, trades: pd.DataFr
                 "as Trend filter, and the 50-day average must also be rising for buys (falling for sells) compared with 10 trading days "
                 "earlier. Trend + slope + 20-EMA momentum = as that, and on the 15-minute chart the price must be above a rising "
                 "20-period average for buys (below a falling one for sells) at the signal. No two-way levels = skip a share when the "
-                "same scan also saw the opposite trade on it. No failed-break sells = drop 'Breakout' sells. Scenarios: Every "
+                "same scan also saw the opposite trade on it. No failed-break sells = drop 'Breakout' sells. Phil's confirmations "
+                "(20 Oct): reclaims need a close at least 0.5 ATR back across the zone edge; range trades need a rejection "
+                "candle (range at least 0.75 ATR, wick on the level side at least 40% of the candle, close in the outer 40%). "
+                "Those variants and 'Baseline, target reset' put the target at 3x the stop distance from the actual fill. "
+                "First half / second half = the replayed days split in two, to check the result holds over time. Scenarios: Every "
                 "idea = all ideas at first sighting; Top 2 at 10:30 = your main mock trader; Live: first 3 triggers = the live mock trader.")
     note(ws, 5, "Trend pullback (new strategy, idea 17): a different engine, not a filter. Daily trend: price above a rising 50-day "
                 "average (sells: below a falling one). On 15-minute candles the 20-period average must be rising with the 9-period above "
@@ -413,6 +480,9 @@ def run(args) -> int:
         print("No setups found in the replayed period.")
         return 1
     now = max(data.index[-1] for data in intraday.values()) + pd.Timedelta(minutes=minutes)
+    global SPLIT_DAY
+    replay_days = sorted(setups["day"].unique())
+    SPLIT_DAY = replay_days[len(replay_days) // 2]
     two_way = two_way_keys(setups)
     candidates = with_keys(setups)
     candidates = candidates[(~candidates["conflict"]) & (candidates["run_time"].str[11:16] <= "15:30")]
@@ -454,6 +524,15 @@ def run(args) -> int:
                     VARIANTS[4]: (slope, None), VARIANTS[5]: (momentum, None),
                     VARIANTS[6]: (one_way, None), VARIANTS[7]: (candidates[~failed_sell], None),
                     VARIANTS[8]: (one_way[~((one_way["setup"] == "Breakout") & (one_way["direction"] == "Short"))], None)}
+    print("Checking Phil's confirmation candles...")
+    flagged = confirmation_flags(candidates, intraday)
+    is_reclaim, is_range = flagged["setup"] == "Breakout", flagged["setup"] == "Range"
+    variant_sets.update({
+        VARIANTS[9]: (candidates, None),
+        VARIANTS[10]: (candidates[~is_reclaim | flagged["reclaim_confirmed"]], None),
+        VARIANTS[11]: (candidates[~is_range | flagged["range_confirmed"]], None),
+        VARIANTS[12]: (candidates[(~is_reclaim | flagged["reclaim_confirmed"]) & (~is_range | flagged["range_confirmed"])], None)})
+    reset = set(VARIANTS[9:13])
     summary, daily_cols, baseline_trades = [], {}, []
     for variant, (frame, min_stop) in variant_sets.items():
         print(f"Scoring: {variant}...")
@@ -462,7 +541,7 @@ def run(args) -> int:
                 summary.append({"Variant": variant, "Scenario": scenario, "Completed trades": 0})
                 continue
             levels = widen(chosen, min_stop) if min_stop else chosen
-            trades = score(levels, intraday, args.horizon, now, args.interval)
+            trades = score(levels, intraday, args.horizon, now, args.interval, reset_target=variant in reset)
             summary.append(summary_row(variant, scenario, trades))
             if scenario != "Live: first 3 triggers" and not trades.empty:
                 done = trades[trades["status"] == "done"]

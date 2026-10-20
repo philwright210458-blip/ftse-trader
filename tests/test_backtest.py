@@ -40,6 +40,11 @@ class BacktestTests(unittest.TestCase):
         unchanged = bt.widen(pd.DataFrame({"entry": [100.0], "stop": [97.0], "target": [109.0], "direction": ["Long"]}), 2.0)
         self.assertEqual(float(unchanged["stop"][0]), 97.0)
 
+    def test_two_way_keys_count_conflict_rows(self):
+        setups = pd.DataFrame({"run_time": ["r1", "r1", "r1", "r2"], "ticker": ["A", "A", "B", "A"],
+                               "direction": ["Long", "Short", "Long", "Long"], "conflict": [False, True, False, False]})
+        self.assertEqual(bt.two_way_keys(setups), {("r1", "A")})
+
     def test_sma_uses_only_earlier_days(self):
         index = pd.date_range("2026-01-01", periods=60, freq="D")
         closes = pd.Series(range(60), index=index, dtype=float)
@@ -69,7 +74,7 @@ class BacktestTests(unittest.TestCase):
         summary = pd.DataFrame(list(book["Summary"].iter_rows(min_row=7, values_only=True)))
         summary.columns = summary.iloc[0]
         summary = summary.iloc[1:]
-        self.assertEqual(len(summary), 21)        # 6 variants x 3 scenarios + 3 trend-pullback rows
+        self.assertEqual(len(summary), 30)        # 9 variants x 3 scenarios + 3 trend-pullback rows
         trades = pd.DataFrame(list(book["Trades (baseline)"].iter_rows(values_only=True)))
         trades.columns = trades.iloc[0]
         done = trades.iloc[1:].dropna(subset=["After costs (£)"])

@@ -79,12 +79,12 @@ def build_workbook(summary, setups, daily, trades, period_text, generated) -> Wo
     ws.title = "Summary"
     ws.cell(1, 1, "Range model version 2 (Patrick Nill's method, rebuilt): backtest").font = Font(name="Arial", bold=True, size=13)
     bt.note(ws, 2, f"Generated {generated}. {period_text}. Each signal used only finished candles and was filled at the next "
-                   "15-minute candle's open; stop counted first if stop and target fall in one candle.")
-    bt.note(ws, 3, "Rules: a big move (5 typical candles in 2 hours), then a sideways box (at least 4 hours, 3 touches, no taller "
+                   "candle's open; stop counted first if stop and target fall in one candle.")
+    bt.note(ws, 3, "Rules (counted in candles, so on hourly candles every pattern takes 4 times as long): a big move "
+                   "(5 typical candles' worth within 8 candles), then a sideways box (at least 16 candles, 3 touches, no taller "
                    "than 60% of the move). Trades: Range (edge of the box back to the far edge), Breakout (close outside, then "
                    "a confirming close further out), Reclaim (close outside, then back inside within 3 candles). Target = next "
-                   "fair-value level, taken only if at least 3x the stop distance. Held up to 3 trading days. No new signals "
-                   "13:15-14:45 or after 15:30.")
+                   "fair-value level, taken only if at least 3x the stop distance. No new signals 13:15-14:45 or after 15:30.")
     bt.note(ws, 4, "Costs per £100: shares 10p dealing + 50p stamp duty on buys; FTSE 100 index (spread bet/CFD) 2p spread + 2p "
                    "per night held. Share sells are shown for interest only: a normal share account cannot sell short. "
                    + OLD_MODEL_NOTE)
@@ -136,7 +136,11 @@ def run(args) -> int:
         universe = [c for c in universe if c.kind != "trust"]
     if args.limit:
         universe = universe[:args.limit]
+    if getattr(args, "index_only", False):
+        universe = []
     minutes = sc.interval_minutes(args.interval)
+    # Hourly candles: enter at the open of the next candle, which starts the moment the signal candle closes.
+    delay = v2.AVAILABLE_DELAY if minutes <= 15 else pd.Timedelta(0)
     print(f"Downloading {len(universe)} shares and the FTSE 100 index ({args.period} of {args.interval} candles)...")
     intraday = download(universe + [INDEX], args.interval, args.period, args.delay)
     shares = [c for c in universe if c.yahoo_ticker in intraday]
@@ -148,8 +152,8 @@ def run(args) -> int:
     now = max(d.index[-1] for d in intraday.values()) + pd.Timedelta(minutes=minutes)
 
     print("Finding signals...")
-    share_rows = [row for c in shares for row in v2.signals(c, intraday[c.yahoo_ticker], minutes, replay_days)]
-    index_rows = v2.signals(INDEX, intraday.get(INDEX_TICKER), minutes, replay_days)
+    share_rows = [row for c in shares for row in v2.signals(c, intraday[c.yahoo_ticker], minutes, replay_days, delay=delay)]
+    index_rows = v2.signals(INDEX, intraday.get(INDEX_TICKER), minutes, replay_days, delay=delay)
     share_sig = bt.with_keys(pd.DataFrame(share_rows)) if share_rows else pd.DataFrame()
     index_sig = bt.with_keys(pd.DataFrame(index_rows)) if index_rows else pd.DataFrame()
     print(f"  {len(share_sig)} share signals, {len(index_sig)} index signals")
@@ -189,8 +193,9 @@ def run(args) -> int:
     daily_frame.index.name = "Date"
     daily_frame = daily_frame.reset_index()
     days = sorted(replay_days)
-    period_text = (f"History replayed: {days[0]} to {days[-1]} ({len(days)} trading days, {len(shares)} shares plus the "
-                   f"FTSE 100 index); each trade held up to {args.horizon} trading day(s)") if days else "No days replayed"
+    what = f"{len(shares)} shares plus the FTSE 100 index" if shares else "FTSE 100 index only"
+    period_text = (f"History replayed: {days[0]} to {days[-1]} ({len(days)} trading days, {what}, {args.interval} candles); "
+                   f"each trade held up to {args.horizon} trading day(s)") if days else "No days replayed"
     for frame in trade_sheets.values():
         frame.sort_values(["day", "run_time"], inplace=True)
     generated = datetime.now(sc.UK_TZ).strftime("%Y-%m-%d %H:%M UK time")
@@ -221,6 +226,7 @@ def main() -> None:
     parser.add_argument("--horizon", type=int, default=3, help="Longest hold in trading days (default: 3)")
     parser.add_argument("--exclude-trusts", action="store_true")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--index-only", action="store_true", help="Test only the FTSE 100 index")
     parser.add_argument("--delay", type=float, default=0.2)
     parser.add_argument("--out", default="ftse_range_v2_backtest.xlsx")
     sys.exit(run(parser.parse_args()))

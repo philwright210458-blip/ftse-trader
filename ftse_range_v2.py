@@ -102,7 +102,7 @@ def nearest_level(levels, i: int, beyond: float, direction: str, extra=()) -> fl
 
 
 def signals(company, data: pd.DataFrame | None, interval_min: int = 15, days: set[str] | None = None,
-            cfg: sc.IndexConfig | None = None) -> list[dict]:
+            cfg: sc.IndexConfig | None = None, delay: pd.Timedelta = AVAILABLE_DELAY) -> list[dict]:
     """All version-2 signals for one share (or the index), as backtest setup rows."""
     if data is None or len(data) < TR_WINDOW + IMPULSE_BARS + BOX_MIN_BARS:
         return []
@@ -140,7 +140,7 @@ def signals(company, data: pd.DataFrame | None, interval_min: int = 15, days: se
             return
         rows.append({
             "day": day, "as_of": clock, "data_time": stamps[i].isoformat(),
-            "run_time": (closes_at + AVAILABLE_DELAY).strftime("%Y-%m-%d %H:%M:%S"), "mode": "range_v2",
+            "run_time": (closes_at + delay).strftime("%Y-%m-%d %H:%M:%S"), "mode": "range_v2",
             "company": company.company, "ticker": company.yahoo_ticker, "index": company.index,
             "setup": setup, "direction": direction, "score": round(reward / risk, 2),
             "entry": round(entry, 4), "stop": round(float(stop), 4), "target": round(float(target), 4),

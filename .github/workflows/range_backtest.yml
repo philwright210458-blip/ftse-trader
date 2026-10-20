@@ -1,0 +1,72 @@
+# FTSE Range v2 Backtest: replays range model version 2 (Patrick Nill's method,
+# rebuilt; see ftse_range_v2.py) on FTSE shares and the FTSE 100 index.
+# Run it by hand from the Actions tab. It saves ftse_range_v2_backtest.xlsx to
+# the repo and doesn't touch the live scans.
+
+name: FTSE Range v2 Backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      hold_days:
+        description: "Longest hold per trade in trading days"
+        required: false
+        default: "3"
+      limit:
+        description: "Only the first N shares (leave blank for all)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftse-backtest
+  cancel-in-progress: false
+
+jobs:
+  backtest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install packages
+        run: pip install -r requirements.txt
+
+      - name: Run backtest
+        env:
+          LIMIT: ${{ inputs.limit }}
+          HOLD: ${{ inputs.hold_days }}
+        run: |
+          if [ -z "$HOLD" ]; then HOLD=3; fi
+          EXTRA=""
+          if [ -n "$LIMIT" ]; then EXTRA="--limit $LIMIT"; fi
+          python -u ftse_range_backtest.py --exclude-trusts --horizon "$HOLD" $EXTRA --out ftse_range_v2_backtest.xlsx
+
+      - name: Make results downloadable
+        uses: actions/upload-artifact@v4
+        with:
+          name: ftse-range-v2-backtest
+          path: ftse_range_v2_backtest.xlsx
+
+      - name: Save results to the repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add ftse_range_v2_backtest.xlsx
+          if git diff --cached --quiet; then echo "Nothing new to save."; exit 0; fi
+          git commit -m "Range v2 backtest $(TZ=Europe/London date '+%Y-%m-%d %H:%M')"
+          for attempt in 1 2 3; do
+            git pull --rebase && git push && exit 0
+            sleep 15
+          done
+          echo "::error::Could not save results to the repo after 3 attempts."
+          exit 1

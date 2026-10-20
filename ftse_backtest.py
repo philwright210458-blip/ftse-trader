@@ -65,14 +65,15 @@ VARIANTS = ["Baseline (live rules)", "Trend filter (50-day average)", "Stop at l
             "Trend + 50-day slope", "Trend + slope + 20-EMA momentum",
             "No two-way levels", "No failed-break sells", "No two-way levels + no failed-break sells",
             "Baseline, target reset at actual entry", "Reclaims need a 0.5 ATR close beyond the edge",
-            "Range trades need a rejection candle", "Both confirmations"]
+            "Range trades need a rejection candle", "Both confirmations", "Live rules from 21 Oct (all three)"]
 # Phil's confirmation rules (20 Oct), each set once before testing. ATR = the scanner's typical candle range
 # (median true range of the last 14 candles). Entry stays at the next candle's open after the confirming
 # candle; the target is then reset to 3x the stop distance measured from that actual entry.
-RECLAIM_DISPLACEMENT_ATR = 0.5     # reclaim close must be at least this far back across the zone edge
-REJECTION_MIN_RANGE_ATR = 0.75     # rejection candle's high-low range must be at least this
-REJECTION_WICK_SHARE = 0.4         # wick on the level's side must be at least this share of the candle's range
-REJECTION_CLOSE_LOCATION = 0.6     # close in the top 40% of the candle for buys (bottom 40% for sells)
+# The live scanner uses the same numbers (switched on 21 Oct 2026).
+RECLAIM_DISPLACEMENT_ATR = sc.RECLAIM_DISPLACEMENT_ATR
+REJECTION_MIN_RANGE_ATR = sc.REJECTION_MIN_RANGE_ATR
+REJECTION_WICK_SHARE = sc.REJECTION_WICK_SHARE
+REJECTION_CLOSE_LOCATION = sc.REJECTION_CLOSE_LOCATION
 SLOPE_DAYS = 10      # the 50-day average must be higher (buys) or lower (sells) than it was this many trading days earlier
 EMA_SPAN, EMA_LOOKBACK = 20, 4   # 20-period EMA on 15-minute candles, rising/falling over the last 4 candles (1 hour)
 PULLBACK = "Trend pullback (new strategy)"
@@ -532,6 +533,9 @@ def run(args) -> int:
         VARIANTS[10]: (candidates[~is_reclaim | flagged["reclaim_confirmed"]], None),
         VARIANTS[11]: (candidates[~is_range | flagged["range_confirmed"]], None),
         VARIANTS[12]: (candidates[(~is_reclaim | flagged["reclaim_confirmed"]) & (~is_range | flagged["range_confirmed"])], None)})
+    confirmed = (~is_reclaim | flagged["reclaim_confirmed"]) & (~is_range | flagged["range_confirmed"])
+    not_two_way = ~candidates.set_index(["run_time", "ticker"]).index.isin(two_way)
+    variant_sets[VARIANTS[13]] = (candidates[confirmed & not_two_way], None)   # same as the live scanner from 21 Oct
     reset = set(VARIANTS[9:13])
     summary, daily_cols, baseline_trades = [], {}, []
     for variant, (frame, min_stop) in variant_sets.items():

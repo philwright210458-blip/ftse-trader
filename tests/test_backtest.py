@@ -59,6 +59,8 @@ class BacktestTests(unittest.TestCase):
         near = self._bars((99.0, 99.4, 98.9, 99.3))     # close only 0.3 above
         self.assertTrue(bt.confirmation_flags(self._row("Breakout", "Long", far), {"A.L": far})["reclaim_confirmed"].iloc[0])
         self.assertFalse(bt.confirmation_flags(self._row("Breakout", "Long", near), {"A.L": near})["reclaim_confirmed"].iloc[0])
+        distance = bt.confirmation_flags(self._row("Breakout", "Long", near), {"A.L": near})["reclaim_atr_distance"].iloc[0]
+        self.assertAlmostEqual(distance, 0.3)
 
     def test_range_needs_rejection_candle(self):
         pin = self._bars((99.6, 99.8, 98.9, 99.7))      # long lower wick into the zone, closes near the high
@@ -97,7 +99,7 @@ class BacktestTests(unittest.TestCase):
         summary = pd.DataFrame(list(book["Summary"].iter_rows(min_row=7, values_only=True)))
         summary.columns = summary.iloc[0]
         summary = summary.iloc[1:]
-        self.assertEqual(len(summary), 45)        # 14 variants x 3 scenarios + 3 trend-pullback rows
+        self.assertEqual(len(summary), 51)        # 16 variants x 3 scenarios + 3 trend-pullback rows
         trades = pd.DataFrame(list(book["Trades (baseline)"].iter_rows(values_only=True)))
         trades.columns = trades.iloc[0]
         done = trades.iloc[1:].dropna(subset=["After costs (£)"])

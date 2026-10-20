@@ -109,6 +109,7 @@ class TradeSetup:
     last_trade: pd.Timestamp | None = None  # when the newest traded candle closed
     stale: bool = False
     stale_note: str = ""
+    filter_note: str = ""   # why the entry rules (from 21 Oct 2026) reject this setup; empty = passes
 
 
 def load_universe(path: Path = UNIVERSE_PATH) -> list[Constituent]:
@@ -354,13 +355,76 @@ def build_setups(company: str, ticker: str, label: str, df: pd.DataFrame,
 
 
 def dedupe_setups(setups: list[TradeSetup]) -> list[TradeSetup]:
+    """Best setup per company and direction; one that passes the entry rules beats one that doesn't."""
     best: dict[tuple[str, str], TradeSetup] = {}
+
+    def rank(item: TradeSetup):
+        return (not item.conflict, item.quality_score, -(item.zone.high - item.zone.low))
+
     for setup in setups:
         key = (setup.company, setup.direction)
         current = best.get(key)
-        if current is None or (setup.quality_score, -(setup.zone.high - setup.zone.low)) > (current.quality_score, -(current.zone.high - current.zone.low)):
+        if current is None or rank(setup) > rank(current):
             best[key] = setup
     return list(best.values())
+
+
+# ----------------------------------------------------------------------
+# Entry rules (switched on 21 Oct 2026, after backtests on 20 Oct showed them neutral)
+# ATR here = typical_true_range: the median true range of the last 14 candles.
+# ----------------------------------------------------------------------
+
+RECLAIM_DISPLACEMENT_ATR = 0.5     # reclaim: close at least this far back across the zone edge
+REJECTION_MIN_RANGE_ATR = 0.75     # range: the signal candle's high-low range is at least this
+REJECTION_WICK_SHARE = 0.4         # range: wick on the level's side is at least this share of the candle
+REJECTION_CLOSE_LOCATION = 0.6     # range: close in the top 40% of the candle for buys (bottom 40% for sells)
+
+
+def entry_rule_note(setup: TradeSetup, df: pd.DataFrame) -> str:
+    """Empty if the setup's signal candle passes its entry rule, otherwise the reason it fails."""
+    if len(df) < 15:
+        return "Not enough candles to check the entry rule."
+    atr = typical_true_range(df)
+    bar = df.iloc[-1]
+    o, h, l, c = (float(bar[k]) for k in ("open", "high", "low", "close"))
+    long = setup.direction == "Long"
+    if atr <= 0:
+        return "No typical candle range to measure against."
+    if setup.setup_type == "Breakout":
+        need = RECLAIM_DISPLACEMENT_ATR * atr
+        ok = c >= setup.zone.low + need if long else c <= setup.zone.high - need
+        return "" if ok else f"Reclaim close less than {RECLAIM_DISPLACEMENT_ATR} ATR back across the zone edge."
+    span = h - l
+    if span <= 0 or span < REJECTION_MIN_RANGE_ATR * atr:
+        return f"No rejection candle: candle smaller than {REJECTION_MIN_RANGE_ATR} ATR."
+    if long:
+        wick, location, touched = (min(o, c) - l) / span, (c - l) / span, l <= setup.zone.high
+    else:
+        wick, location, touched = (h - max(o, c)) / span, (h - c) / span, h >= setup.zone.low
+    if not touched:
+        return "No rejection candle: the candle did not reach the zone."
+    if wick < REJECTION_WICK_SHARE or location < REJECTION_CLOSE_LOCATION:
+        return "No rejection candle: wick too short or close not far enough from the level."
+    return ""
+
+
+def apply_entry_rules(setups: list[TradeSetup]) -> int:
+    """Exclude (as conflicts) setups that fail the entry rules, and every setup on a share seen both ways.
+
+    Call after annotate_conflicts. Returns how many setups were excluded by these rules."""
+    directions: dict[str, set[str]] = {}
+    for setup in setups:
+        directions.setdefault(setup.company, set()).add(setup.direction)
+    excluded = 0
+    for setup in setups:
+        if len(directions[setup.company]) > 1:
+            note = "Level seen both ways (a buy and a sell) in this scan; skipped."
+        else:
+            note = setup.filter_note
+        if note:
+            excluded += int(not setup.conflict)
+            setup.conflict, setup.conflict_note = True, note
+    return excluded
 
 
 def annotate_conflicts(setups: list[TradeSetup]) -> list[TradeSetup]:
@@ -702,6 +766,7 @@ def run_scan(universe: list[Constituent], interval: str, period: str, delay: flo
             closes = data.index[-1] + pd.Timedelta(minutes=interval_minutes(interval) or 0)
             for setup in setups:
                 setup.kind, setup.last_trade = company.kind, closes
+                setup.filter_note = entry_rule_note(setup, data)
             all_setups.extend(setups)
             if setups:
                 print(f"  [{number}/{len(universe)}] {company.company} ({company.yahoo_ticker}) -> {len(setups)} setup(s)")
@@ -735,6 +800,8 @@ def main() -> None:
                         help="Leave out investment trusts and funds (the 'type' column in ftse_universe.csv)")
     parser.add_argument("--live-max-per-day", type=int, default=3,
                         help="Live mock trader: most new paper trades entered per day, in the order they trigger (default: 3; 0 turns it off)")
+    parser.add_argument("--no-entry-rules", action="store_true",
+                        help="Turn off the entry rules added on 21 Oct 2026 (seen-both-ways, rejection candle, reclaim distance)")
     parser.add_argument("--top", type=int, default=10, help="Show top N non-conflicting setups by quality score; 0 means no cap (default: 10)")
     args = parser.parse_args()
 
@@ -784,6 +851,7 @@ def main() -> None:
         stale_count = mark_stale(all_setups, info.data_time + pd.Timedelta(minutes=minutes), args.max_stale)
     fresh = [setup for setup in all_setups if not setup.stale]
     annotate_conflicts(fresh)
+    rule_excluded = 0 if args.no_entry_rules else apply_entry_rules(fresh)
     selected = dedupe_setups(fresh)
     ranked = sorted((s for s in selected if not s.conflict), key=lambda s: s.quality_score, reverse=True)
     if args.top > 0:
@@ -803,6 +871,8 @@ def main() -> None:
         print(f"{stale_count} setup(s) excluded as stale (last trade more than {args.max_stale} min behind the freshest candle).")
     print(f"{len(all_setups) - stale_count} fresh setup(s) -> {len(selected)} after de-duplication; "
           f"{sum(s.conflict for s in selected)} conflicting/weaker excluded from Top Trades.")
+    if rule_excluded:
+        print(f"{rule_excluded} setup(s) excluded by the entry rules (seen both ways, no rejection candle, or reclaim too shallow).")
     if info.data_check:
         print(info.data_check)
     if failures:

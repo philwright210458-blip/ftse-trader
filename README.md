@@ -19,7 +19,7 @@ Workflows run by hand from the Actions tab: **FTSE Backtest**, **FTSE Range v2 B
 
 | Model | Code | Status |
 | --- | --- | --- |
-| 15-minute range and breakout scanner (the live one) | `ftse_trade_scanner.py`, `ftse_live_mock.py`, `ftse_outcomes.py` | Running; backtest negative after costs |
+| 15-minute range and breakout scanner (the live one) | `ftse_trade_scanner.py`, `ftse_live_mock.py`, `ftse_outcomes.py` | Running; backtest negative after costs. From 21 Oct 2026 it also skips shares seen both ways, needs a rejection candle for range trades and a close 0.5 ATR beyond the edge for reclaims (`--no-entry-rules` turns these off) |
 | Trend pullback (idea 17) | `ftse_pullback.py` (tested by `ftse_backtest.py`) | Rejected |
 | Range model version 2 (Patrick Nill's method, rebuilt) | `ftse_range_v2.py`, `ftse_range_backtest.py` | Rejected on shares and the index |
 | Claude's model: monthly momentum | `ftse_momentum.py` (backtest), `ftse_momentum_live.py` (paper trading from 30 Oct 2026) | Paper trading |

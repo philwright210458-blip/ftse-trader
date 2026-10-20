@@ -1,6 +1,6 @@
 # FTSE Backtest: replays the scanner over Yahoo's recent 15-minute history and
 # scores the trades (see ftse_backtest.py). Run it by hand from the Actions tab.
-# It takes roughly 15-30 minutes and saves ftse_backtest.xlsx to the repo.
+# It takes roughly 15-30 minutes and saves results/ftse_backtest.xlsx to the repo.
 # It doesn't touch the live scan history or the scheduled scans.
 
 name: FTSE Backtest
@@ -46,7 +46,7 @@ jobs:
           LIMIT: ${{ inputs.limit }}
           HOLD: ${{ inputs.hold_days }}
         run: |
-          if [ "$HOLD" = "1" ] || [ -z "$HOLD" ]; then OUT=ftse_backtest.xlsx; HOLD=1; else OUT="ftse_backtest_hold${HOLD}d.xlsx"; fi
+          if [ "$HOLD" = "1" ] || [ -z "$HOLD" ]; then OUT=results/ftse_backtest.xlsx; HOLD=1; else OUT="results/ftse_backtest_hold${HOLD}d.xlsx"; fi
           echo "OUT=$OUT" >> "$GITHUB_ENV"
           EXTRA=""
           if [ -n "$LIMIT" ]; then EXTRA="--limit $LIMIT"; fi

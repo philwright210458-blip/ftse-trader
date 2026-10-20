@@ -1,6 +1,6 @@
 # FTSE Momentum Backtest: Claude's model (monthly momentum on FTSE 350 shares,
 # daily prices since 2010; see ftse_momentum.py). Run it by hand from the
-# Actions tab. It saves ftse_momentum_backtest.xlsx to the repo and doesn't
+# Actions tab. It saves results/ftse_momentum_backtest.xlsx to the repo and doesn't
 # touch the live scans.
 
 name: FTSE Momentum Backtest
@@ -40,19 +40,19 @@ jobs:
       - name: Run backtest
         env:
           START: ${{ inputs.start }}
-        run: python -u ftse_momentum.py --exclude-trusts --start "${START:-2011-01-01}" --out ftse_momentum_backtest.xlsx
+        run: python -u ftse_momentum.py --exclude-trusts --start "${START:-2011-01-01}" --out results/ftse_momentum_backtest.xlsx
 
       - name: Make results downloadable
         uses: actions/upload-artifact@v4
         with:
           name: ftse-momentum-backtest-${{ github.run_number }}
-          path: ftse_momentum_backtest.xlsx
+          path: results/ftse_momentum_backtest.xlsx
 
       - name: Save results to the repo
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
-          git add ftse_momentum_backtest.xlsx
+          git add results/ftse_momentum_backtest.xlsx
           if git diff --cached --quiet; then echo "Nothing new to save."; exit 0; fi
           git commit -m "Momentum backtest $(TZ=Europe/London date '+%Y-%m-%d %H:%M')"
           for attempt in 1 2 3; do

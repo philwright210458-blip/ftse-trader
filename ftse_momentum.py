@@ -22,7 +22,7 @@ Rules (set once from the published research, not tuned to these results):
 Dividends are added back from Yahoo's dividend records, so returns include them.
 Run on a machine that can reach Yahoo (the "FTSE Momentum Backtest" workflow):
 
-    python ftse_momentum.py --exclude-trusts --out ftse_momentum_backtest.xlsx
+    python ftse_momentum.py --exclude-trusts --out results/ftse_momentum_backtest.xlsx
 
 Big caution: the share list is today's FTSE 350. Companies that collapsed or
 were taken over and left the index are missing, which flatters any backtest
@@ -536,7 +536,7 @@ def main() -> None:
     parser.add_argument("--start", default="2011-01-01", help="First month-end the model may trade (default 2011-01-01)")
     parser.add_argument("--exclude-trusts", action="store_true")
     parser.add_argument("--limit", type=int, default=None)
-    parser.add_argument("--out", default="ftse_momentum_backtest.xlsx")
+    parser.add_argument("--out", default="results/ftse_momentum_backtest.xlsx")
     sys.exit(run(parser.parse_args()))
 
 

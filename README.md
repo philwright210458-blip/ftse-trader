@@ -23,6 +23,7 @@ Workflows run by hand from the Actions tab: **FTSE Backtest**, **FTSE Range v2 B
 | Trend pullback (idea 17) | `ftse_pullback.py` (tested by `ftse_backtest.py`) | Rejected |
 | Range model version 2 (Patrick Nill's method, rebuilt) | `ftse_range_v2.py`, `ftse_range_backtest.py` | Rejected on shares and the index |
 | Claude's model: monthly momentum | `ftse_momentum.py` (backtest), `ftse_momentum_live.py` (paper trading from 30 Oct 2026) | Paper trading |
+| Daily structure pullback (idea 24, Market Structure report) | `ftse_structure.py`, `ftse_structure_backtest.py`, `ftse_structure_live.py` (paper trading from 22 Oct 2026, £250 a trade, results in `ftse_structure_live.xlsx`) | Paper trading; backtests in progress |
 
 ## Folders and files
 

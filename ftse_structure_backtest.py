@@ -128,6 +128,9 @@ def run(args) -> int:
     names = {c.yahoo_ticker: c.company for c in universe}
     print(f"Downloading {args.period} of daily candles for {len(universe)} shares...")
     data = db.download([c.yahoo_ticker for c in universe], args.period)
+    if getattr(args, "start", None):
+        data = {t: f.loc[pd.Timestamp(args.start):] for t, f in data.items()}
+        data = {t: f for t, f in data.items() if len(f) > 300}
     if not data:
         print("No data downloaded (is Yahoo reachable?).")
         return 1
@@ -209,6 +212,7 @@ def main() -> None:
     parser.add_argument("--index", default="FTSE 100")
     parser.add_argument("--period", default="10y")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--start", default=None, help="Ignore prices before this date (use with --period max)")
     parser.add_argument("--out", default="results/ftse_structure_pullback_ftse100.xlsx")
     sys.exit(run(parser.parse_args()))
 

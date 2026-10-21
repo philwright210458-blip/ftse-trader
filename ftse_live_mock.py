@@ -79,3 +79,49 @@ def record_live_mock(data_dir: Path, info, candidates, max_per_day: int = DEFAUL
                 writer.writeheader()
             writer.writerows(rows)
     return rows
+
+
+# ----------------------------------------------------------------------
+# Progress during the day (for the "Today's Mock Trades" sheet of the scan workbook)
+# ----------------------------------------------------------------------
+
+DEALING_GBP, STAMP_GBP = 0.10, 0.50       # per £100: dealing on every trade, stamp duty on buys
+
+
+def mock_progress(row: dict, data: pd.DataFrame | None) -> dict:
+    """Provisional state of one live mock trade from completed candles: open, stopped out or target hit.
+
+    Same rules as the outcome tracker: filled at the open of the first candle that starts after the
+    signal, stop counted first if stop and target fall in the same candle. The 17:05 outcome run is final."""
+    result = {"fill": None, "status": "Waiting for entry candle", "time": "", "price": None,
+              "gross": None, "costs": None, "net": None}
+    if data is None or data.empty:
+        result["status"] = "Price check unavailable"
+        return result
+    signal = pd.Timestamp(row["signal_time"])
+    signal = signal.tz_localize(data.index.tz) if signal.tzinfo is None and data.index.tz is not None else signal
+    after = data[data.index >= signal]
+    if after.empty:
+        return result
+    long = row["direction"] == "Long"
+    stop, target = float(row["stop"]), float(row["target"])
+    fill = float(after["open"].iloc[0])
+    result["fill"] = round(fill, 2)
+    if (long and (fill <= stop or fill >= target)) or (not long and (fill >= stop or fill <= target)):
+        result["status"] = "Skipped: opened past the stop or target"
+        return result
+    status, price, when = "Open", float(after["close"].iloc[-1]), after.index[-1]
+    for stamp, bar in after.iterrows():
+        o, h, l = float(bar["open"]), float(bar["high"]), float(bar["low"])
+        hit_stop, hit_target = (l <= stop, h >= target) if long else (h >= stop, l <= target)
+        if hit_stop:
+            status, price, when = "Stopped out", (min(o, stop) if long else max(o, stop)), stamp
+            break
+        if hit_target:
+            status, price, when = "Target hit", (max(o, target) if long else min(o, target)), stamp
+            break
+    gross = ((price - fill) if long else (fill - price)) / fill * 100
+    costs = DEALING_GBP + (STAMP_GBP if long else 0.0)
+    result.update(status=status, time=when.strftime("%H:%M"), price=round(price, 2), gross=round(gross, 2),
+                  costs=costs, net=round(gross - costs, 2))
+    return result

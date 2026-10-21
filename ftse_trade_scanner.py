@@ -651,6 +651,36 @@ def _add_note(ws, text: str) -> None:
     ws.cell(1, 1).font = Font(name="Arial", italic=True, size=9)
 
 
+MOCK_HEADERS = ["#", "Signal time", "Company", "Ticker", "Setup", "Direction", "Entry (filled)", "Stop", "Target",
+                "Status so far", "At", "Latest or exit price", "Before costs per £100 (£)", "Costs (£)",
+                "After costs per £100 (£)"]
+
+
+def _write_mock_sheet(ws, rows: list[dict], info: "RunInfo") -> None:
+    """Today's live mock trades with their progress so far, so they stay visible after they leave Top Trades."""
+    _style_header(ws, MOCK_HEADERS, {1: 5, 2: 11, 3: 30, 4: 10})
+    money = '"£"#,##0.00;[Red]-"£"#,##0.00'
+    for row in rows:
+        p = row.get("progress", {})
+        ws.append([int(row["trade_no"]), str(row["signal_time"])[11:16], row["company"], row["ticker"],
+                   "Reclaim" if row["setup"] == "Breakout" else row["setup"],
+                   "Buy" if row["direction"] == "Long" else "Sell", p.get("fill"), float(row["stop"]),
+                   float(row["target"]), p.get("status", ""), p.get("time", ""), p.get("price"), p.get("gross"),
+                   p.get("costs"), p.get("net")])
+        for column in (13, 14, 15):
+            ws.cell(ws.max_row, column).number_format = money
+        status = p.get("status", "")
+        colour = "D9EAD3" if status == "Target hit" else "F4CCCC" if status == "Stopped out" else None
+        if colour:
+            for cell in ws[ws.max_row]:
+                cell.fill = PatternFill("solid", fgColor=colour)
+    if not rows:
+        ws.append(["", "", "No mock trades yet today."])
+    _add_note(ws, f"Mock trades made today (up to 3), with progress from completed 15-minute candles up to {info.as_of} UK. "
+                  "Provisional: Yahoo prices can be up to 15 minutes behind. The final result is worked out at 17:05 "
+                  "in ftse_outcomes.xlsx (Live Mock Trades sheet). Costs per £100: 10p dealing, plus 50p stamp duty on buys.")
+
+
 def _write_today_sheet(ws, setups: pd.DataFrame, runs: pd.DataFrame, day: str, kinds: dict[str, str]) -> None:
     labels = sorted(set(runs.loc[runs["day"] == day, "as_of"]))
     widths = {1: 30, 2: 10, 3: 10, 4: 11, 5: 9}
@@ -696,12 +726,14 @@ def _write_history_sheet(ws, setups: pd.DataFrame, kinds: dict[str, str], days: 
 
 def build_workbook(info: RunInfo, all_setups: list[TradeSetup], selected: list[TradeSetup],
                    ranked: list[TradeSetup], setups_history: pd.DataFrame, runs: pd.DataFrame,
-                   kinds: dict[str, str] | None = None) -> Workbook:
+                   kinds: dict[str, str] | None = None, mock_rows: list[dict] | None = None) -> Workbook:
     kinds = kinds or {}
     workbook = Workbook()
     top = workbook.active
     top.title = "Top Trades"
-    today, audit, history = (workbook.create_sheet(name) for name in ("Today", "All Setups", "History"))
+    mocks, today, audit, history = (workbook.create_sheet(name) for name in
+                                    ("Today's Mock Trades", "Today", "All Setups", "History"))
+    _write_mock_sheet(mocks, mock_rows or [], info)
 
     seen = persistence(setups_history, runs, info.day)
     _style_header(top, TOP_HEADERS)
@@ -725,6 +757,20 @@ def build_workbook(info: RunInfo, all_setups: list[TradeSetup], selected: list[T
 
     _write_history_sheet(history, setups_history, kinds)
     return workbook
+
+
+def todays_mock_trades(data_dir: Path, info: "RunInfo", interval: str) -> list[dict]:
+    """Today's live mock trades, each with its progress so far (one small price download per trade)."""
+    from ftse_live_mock import LIVE_FILENAME, mock_progress, read_live
+    live = read_live(Path(data_dir) / LIVE_FILENAME)
+    rows = live[live["day"] == info.day].to_dict("records") if not live.empty else []
+    for row in rows:
+        try:
+            data = drop_untraded_bars(completed_candles(fetch_data(row["ticker"], interval, "5d"), interval))
+        except Exception:
+            data = None
+        row["progress"] = mock_progress(row, data)
+    return rows
 
 
 def save_workbook(workbook: Workbook, path: Path) -> Path:
@@ -864,7 +910,9 @@ def main() -> None:
         live_rows = record_live_mock(data_dir, info, [s for s in selected if not s.conflict], args.live_max_per_day)
     runs = _read_table(data_dir / "runs.csv", RUN_COLUMNS)
     setups_history = _read_table(data_dir / "setups.csv", SETUP_COLUMNS)
-    saved = save_workbook(build_workbook(info, all_setups, selected, ranked, setups_history, runs, kinds), workbook_path)
+    mock_rows = todays_mock_trades(data_dir, info, args.interval)
+    saved = save_workbook(build_workbook(info, all_setups, selected, ranked, setups_history, runs, kinds, mock_rows),
+                          workbook_path)
 
     print(f"\nScanned {len(universe)} companies ({mode}), data to {info.as_of} UK.")
     if stale_count:

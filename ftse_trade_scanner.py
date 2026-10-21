@@ -931,6 +931,9 @@ def main() -> None:
 
     info = make_run_info(latest, args.interval, mode, len(universe), len(failures))
     info.data_check = describe_data_lag(lags)
+    if args.watch and args.watch_top <= 0 and info.day != datetime.now(UK_TZ).strftime("%Y-%m-%d"):
+        print(f"\nNo candle from today yet (newest data is from {info.day}). Nothing recorded.")
+        return
     if args.watch and is_repeat_candle(runs, info):
         print(f"\nNo new candle since the last scan (data still to {info.as_of}). Nothing recorded.")
         return

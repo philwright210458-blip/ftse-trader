@@ -1,4 +1,4 @@
-# FTSE Full Scan: the full scanner, started at 10:00 UK time (Mon-Fri) by a
+# FTSE Full Scan: the full scanner, started at 08:15 UK time (Mon-Fri) by a
 # cron-job.org timer. GitHub's own scheduler proved too unreliable (runs
 # started hours late or not at all), so this workflow only runs when started
 # from outside or by hand.

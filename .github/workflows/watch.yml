@@ -1,5 +1,6 @@
-# FTSE Watch: re-checks the shortlist from today's full scan. Started every
-# 15 minutes from 10:16 to 12:16 UK time (Mon-Fri) by a cron-job.org timer.
+# FTSE Watch: scans every share again (from 22 Oct 2026; it used to re-check only
+# the 15 shares shortlisted at the full scan). Started every 15 minutes from 08:31
+# to 15:31 UK time (Mon-Fri) by a cron-job.org timer.
 #
 # If two runs see the same 15-minute candle, the scanner notices there's no new
 # candle and records nothing, so a doubled or late run does no harm.
@@ -8,6 +9,11 @@ name: FTSE Watch
 
 on:
   workflow_dispatch:
+    inputs:
+      test:
+        description: "Test run: scan every share but save nothing to the repo"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -20,6 +26,8 @@ jobs:
   watch:
     runs-on: ubuntu-24.04   # pinned so the Ubuntu 26 switch (19 Oct 2026) cannot break it
     timeout-minutes: 15
+    env:
+      TEST: ${{ inputs.test }}
     steps:
       # Check out the latest main, not the commit from when this run was requested:
       # runs queue behind each other, and an earlier run may have saved new results meanwhile.
@@ -38,7 +46,12 @@ jobs:
       - name: Run watch
         run: |
           set +e
-          python -u ftse_trade_scanner.py --watch --exclude-trusts 2>&1 | tee run_output.txt
+          if [ "$TEST" = "true" ]; then
+            echo "TEST RUN: results go to test_run/ and are not saved to the repo."
+            python -u ftse_trade_scanner.py --watch --watch-top 0 --exclude-trusts --data-dir test_run --out test_run/ftse_watch_test.xlsx 2>&1 | tee run_output.txt
+          else
+            python -u ftse_trade_scanner.py --watch --watch-top 0 --exclude-trusts 2>&1 | tee run_output.txt
+          fi
           code=${PIPESTATUS[0]}
           if [ "$code" -ne 0 ] && grep -q "No usable data came back" run_output.txt; then
             echo "::warning::No market data (market closed or Yahoo unavailable). Nothing recorded; this is not a fault."
@@ -50,6 +63,7 @@ jobs:
           exit $code
 
       - name: Save results to the repo
+        if: env.TEST != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"

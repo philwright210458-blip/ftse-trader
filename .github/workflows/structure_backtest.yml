@@ -11,6 +11,14 @@ on:
         description: "FTSE 100, FTSE 250, or blank for both"
         required: false
         default: "FTSE 100"
+      period:
+        description: "How much history: 10y, or max"
+        required: false
+        default: "10y"
+      start:
+        description: "Ignore prices before this date, YYYY-MM-DD (blank = all)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -36,10 +44,17 @@ jobs:
       - name: Run backtest
         env:
           INDEX: ${{ inputs.index }}
+          PERIOD: ${{ inputs.period }}
+          START: ${{ inputs.start }}
         run: |
-          OUT="results/ftse_structure_pullback_$(echo "${INDEX:-all}" | tr -d ' ' | tr 'A-Z' 'a-z').xlsx"
+          NAME="results/ftse_structure_pullback_$(echo "${INDEX:-all}" | tr -d ' ' | tr 'A-Z' 'a-z')"
+          if [ "${PERIOD:-10y}" != "10y" ]; then NAME="${NAME}_${PERIOD}"; fi
+          if [ -n "$START" ]; then NAME="${NAME}_from${START}"; fi
+          OUT="${NAME}.xlsx"
           echo "OUT=$OUT" >> "$GITHUB_ENV"
-          python -u ftse_structure_backtest.py --index "$INDEX" --out "$OUT"
+          EXTRA=""
+          if [ -n "$START" ]; then EXTRA="--start $START"; fi
+          python -u ftse_structure_backtest.py --index "$INDEX" --period "${PERIOD:-10y}" $EXTRA --out "$OUT"
       - name: Save results to the repo
         run: |
           git config user.name "github-actions[bot]"

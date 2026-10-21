@@ -1,0 +1,57 @@
+# FTSE Data Check: lists the 15-minute candles Yahoo is missing for chosen shares
+# and days (ftse_data_check.py). Run by hand from the Actions tab; saves
+# results/data_check.txt. Doesn't touch the live scans.
+
+name: FTSE Data Check
+
+on:
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: "Yahoo tickers, separated by spaces (e.g. DOCS.L BRBY.L)"
+        required: true
+        default: "DOCS.L"
+      days:
+        description: "Trading days YYYY-MM-DD, separated by spaces (blank = last 5)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftse-backtest
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install packages
+        run: pip install -r requirements.txt
+      - name: Check data
+        env:
+          TICKERS: ${{ inputs.tickers }}
+          DAYS: ${{ inputs.days }}
+        run: |
+          if [ -n "$DAYS" ]; then python -u ftse_data_check.py $TICKERS --days $DAYS; else python -u ftse_data_check.py $TICKERS; fi
+      - name: Save results to the repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add results/data_check.txt
+          if git diff --cached --quiet; then echo "Nothing new to save."; exit 0; fi
+          git commit -m "Data check $(TZ=Europe/London date '+%Y-%m-%d %H:%M')"
+          for attempt in 1 2 3; do
+            git pull --rebase && git push && exit 0
+            sleep 15
+          done
+          exit 1

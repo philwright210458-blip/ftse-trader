@@ -99,7 +99,7 @@ class BacktestTests(unittest.TestCase):
         summary = pd.DataFrame(list(book["Summary"].iter_rows(min_row=7, values_only=True)))
         summary.columns = summary.iloc[0]
         summary = summary.iloc[1:]
-        self.assertEqual(len(summary), 51)        # 16 variants x 3 scenarios + 3 trend-pullback rows
+        self.assertEqual(len(summary), 56)        # 16 variants x 3 scenarios + 3 trend-pullback + 5 MA-zone rows
         trades = pd.DataFrame(list(book["Trades (baseline)"].iter_rows(values_only=True)))
         trades.columns = trades.iloc[0]
         done = trades.iloc[1:].dropna(subset=["After costs (£)"])

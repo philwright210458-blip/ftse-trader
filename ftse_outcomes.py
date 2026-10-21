@@ -87,12 +87,16 @@ def market_stamp(value) -> pd.Timestamp:
 
 
 def simulate(side: str, stop: float, target: float, signal_close: pd.Timestamp,
-             data: pd.DataFrame, horizon: int, now: pd.Timestamp, interval: str = "15m") -> Sim:
+             data: pd.DataFrame, horizon: int, now: pd.Timestamp, interval: str = "15m",
+             daily: pd.DataFrame | None = None) -> Sim:
     """Conservative completed-bar simulation from actual signal availability.
 
     `signal_close` is the later of the signal candle close and scan availability.
     Intrabar outcomes become observable at bar close. Gaps in the path keep the
     outcome unresolved: a later candle cannot establish what happened earlier.
+    Exception (22 Oct 2026): with `daily` prices (date-indexed high/low/close), a
+    missing candle is skipped when that whole day's range never reached the stop
+    or the target, because then nothing can have happened inside the gap.
     """
     available, now = market_stamp(signal_close), market_stamp(now)
     minutes = sc.interval_minutes(interval)
@@ -138,13 +142,20 @@ def simulate(side: str, stop: float, target: float, signal_close: pd.Timestamp,
 
     final_close = closing
     last_row, last_end = None, None
+    last_slot_missing = False
     for day in sessions_from(available, horizon):
         day_open, day_close = session_open_close(day)
         start = first if day.date() == first.date() else day_open
         for stamp in pd.date_range(start, day_close, freq=step, inclusive="left"):
             bar_end = min(stamp + step, day_close)
-            if bar_end > now or stamp not in complete.index:
+            if bar_end > now:
                 return missing
+            if stamp not in complete.index:
+                if not day_range_misses(daily, day, side, stop, target):
+                    return missing
+                last_slot_missing = True
+                continue
+            last_slot_missing = False
             row = complete.loc[stamp]
             o, h, l, close = (float(row[c]) for c in ("open", "high", "low", "close"))
             if not all(math.isfinite(v) and v > 0 for v in (o, h, l, close)) or l > min(o, close) or h < max(o, close):
@@ -161,8 +172,42 @@ def simulate(side: str, stop: float, target: float, signal_close: pd.Timestamp,
         final_close = day_close
     if now < final_close or last_row is None:
         return missing
-    price = float(last_row["close"])
-    return Sim("done", "timeout", fill, price, last_end.isoformat(), r_multiple(price), risk_pct, False)
+    price, ended = float(last_row["close"]), last_end
+    if last_slot_missing:               # the session's last candle is missing: use the official daily close
+        close = daily_value(daily, final_close, "close")
+        if close is None:
+            return missing
+        price, ended = close, final_close
+    return Sim("done", "timeout", fill, price, ended.isoformat(), r_multiple(price), risk_pct, False)
+
+
+def daily_value(daily: pd.DataFrame | None, day, column: str) -> float | None:
+    if daily is None or daily.empty or column not in daily.columns:
+        return None
+    stamp = pd.Timestamp(day)
+    key = (stamp.tz_convert(sc.UK_TZ).tz_localize(None) if stamp.tzinfo else stamp).normalize()
+    if key not in daily.index:
+        return None
+    value = float(daily.at[key, column])
+    return value if math.isfinite(value) and value > 0 else None
+
+
+def day_range_misses(daily: pd.DataFrame | None, day, side: str, stop: float, target: float) -> bool:
+    """True when the whole day's high and low stayed strictly between the stop and the target."""
+    high, low = daily_value(daily, day, "high"), daily_value(daily, day, "low")
+    if high is None or low is None:
+        return False
+    if side == "Long":
+        return low > stop and high < target
+    return high < stop and low > target
+
+
+def daily_prices(raw: pd.DataFrame) -> pd.DataFrame:
+    """Yahoo daily candles indexed by plain date, for day_range_misses."""
+    frame = raw.rename(columns=str.lower)[["high", "low", "close"]].astype(float).dropna()
+    index = pd.DatetimeIndex(frame.index)
+    frame.index = (index.tz_convert(sc.UK_TZ).tz_localize(None) if index.tz is not None else index).normalize()
+    return frame[~frame.index.duplicated(keep="last")]
 
 
 # ----------------------------------------------------------------------
@@ -262,10 +307,15 @@ def evaluate_pending(rows: pd.DataFrame, cache: pd.DataFrame, horizons: list[int
             failed += 1
             print(f"  could not fetch {ticker}: {error}")
             continue
+        try:
+            daily = daily_prices(sc.fetch_data(ticker, "1d", "3mo"))
+        except Exception:
+            daily = None            # gaps then stay unresolved, as before
         for row, horizon in items:
             signal_close = market_stamp(row["data_time"]) + pd.Timedelta(minutes=minutes)
             available = max(signal_close, market_stamp(row["run_time"]))
-            sim = simulate(row["direction"], row["stop"], row["target"], available, data, horizon, now, interval)
+            sim = simulate(row["direction"], row["stop"], row["target"], available, data, horizon, now, interval,
+                           daily=daily)
             if sim.status == "pending":
                 pending += 1
                 continue

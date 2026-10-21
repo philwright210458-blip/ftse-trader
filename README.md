@@ -8,8 +8,8 @@ The timers are on cron-job.org; each one starts a GitHub workflow.
 
 | Time (UK) | Workflow | What it does | Results |
 | --- | --- | --- | --- |
-| 10:00 | FTSE Full Scan (`full_scan.yml`) | Scans every share for range and breakout setups | `ftse_scan_latest.xlsx`, `scan_data/` |
-| 10:16, then every 15 min | FTSE Watch (`watch.yml`) | Re-checks the shortlist; makes live mock trades (first 3 a day) | `ftse_scan_latest.xlsx`, `scan_data/live_mock_trades.csv` |
+| 08:15 | FTSE Full Scan (`full_scan.yml`) | Scans every share for range and reclaim setups | `ftse_scan_latest.xlsx`, `scan_data/` |
+| 08:31, then every 15 min to 15:31 | FTSE Watch (`watch.yml`) | Scans every share again; live mock trades: at most 1 new trade per scan, 3 a day | `ftse_scan_latest.xlsx`, `scan_data/live_mock_trades.csv` |
 | 17:05 | FTSE Outcomes (`outcomes.yml`) | Scores the day's ideas and mock trades; also runs the momentum paper trader | `ftse_outcomes.xlsx`, `ftse_momentum_live.xlsx` |
 | after each scan | Publish scans (`publish_scans.yml`) | Sends scan results to the shared dashboard | (dashboard) |
 

@@ -133,6 +133,37 @@ def fetch_data(ticker: str, interval: str, period: str) -> pd.DataFrame:
     return df
 
 
+def fetch_many(tickers: list[str], interval: str, period: str, chunk: int = 50,
+               pause: float = 1.0) -> dict[str, pd.DataFrame]:
+    """Download many tickers at once (much faster than one at a time). Missing tickers are left out,
+    so the caller can fall back to fetch_data for them."""
+    result: dict[str, pd.DataFrame] = {}
+    for first in range(0, len(tickers), chunk):
+        batch = tickers[first:first + chunk]
+        try:
+            raw = yf.download(batch, interval=interval, period=period, progress=False, auto_adjust=False,
+                              group_by="ticker", threads=True)
+        except Exception as error:
+            print(f"  batch download failed ({error}); those shares will be fetched one by one")
+            continue
+        if raw is None or raw.empty:
+            continue
+        for ticker in batch:
+            try:
+                frame = raw[ticker] if isinstance(raw.columns, pd.MultiIndex) else raw
+            except KeyError:
+                continue
+            frame = frame.dropna(how="all")
+            if frame.empty or "Close" not in frame.columns:
+                continue
+            frame = frame.rename(columns=str.lower)
+            frame.index.name = "datetime"
+            result[ticker] = frame
+        if first + chunk < len(tickers):
+            time.sleep(pause)
+    return result
+
+
 def interval_minutes(interval: str) -> int | None:
     unit = interval[-1].lower()
     try:
@@ -790,15 +821,21 @@ def save_workbook(workbook: Workbook, path: Path) -> Path:
 # Scanning
 # ----------------------------------------------------------------------
 
-def run_scan(universe: list[Constituent], interval: str, period: str, delay: float):
+def run_scan(universe: list[Constituent], interval: str, period: str, delay: float, batch: bool = False):
     all_setups: list[TradeSetup] = []
     failures: list[str] = []
     latest: pd.Timestamp | None = None
     lags: list[float] = []
+    prefetched = fetch_many([c.yahoo_ticker for c in universe], interval, period) if batch else {}
+    if batch:
+        print(f"  downloaded {len(prefetched)}/{len(universe)} shares in batches; fetching the rest one by one")
     for number, company in enumerate(universe, 1):
         try:
             cfg = INDEX_RULES[company.index]
-            raw = fetch_data(company.yahoo_ticker, interval, period)
+            raw = prefetched.get(company.yahoo_ticker)
+            if raw is None:
+                raw = fetch_data(company.yahoo_ticker, interval, period)
+                time.sleep(delay)
             lag = candle_lag_minutes(raw, interval)
             if lag is not None:
                 lags.append(lag)
@@ -820,7 +857,6 @@ def run_scan(universe: list[Constituent], interval: str, period: str, delay: flo
             failures.append(f"{company.company} ({company.yahoo_ticker}): {error}")
         if number % 25 == 0:
             print(f"  ...{number}/{len(universe)} scanned, {len(all_setups)} setup(s) found so far")
-        time.sleep(delay)
     return all_setups, failures, latest, lags
 
 
@@ -832,7 +868,7 @@ def main() -> None:
                         help="Re-check only the shortlist from today's latest full scan (fast). "
                              "Records nothing if no new candle has formed since the last scan.")
     parser.add_argument("--watch-top", type=int, default=15,
-                        help="How many shortlisted tickers to watch (default: 15)")
+                        help="How many shortlisted tickers to watch (default: 15; 0 = every share, no full scan needed)")
     parser.add_argument("--out", default=str(DEFAULT_WORKBOOK), help="Workbook to update (default: ftse_scan_latest.xlsx next to this script)")
     parser.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR), help="Folder for the run history CSVs (default: scan_data next to this script)")
     parser.add_argument("--limit", type=int, default=None, help="Only scan the first N companies (full scans; for testing)")
@@ -846,6 +882,11 @@ def main() -> None:
                         help="Leave out investment trusts and funds (the 'type' column in ftse_universe.csv)")
     parser.add_argument("--live-max-per-day", type=int, default=3,
                         help="Live mock trader: most new paper trades entered per day, in the order they trigger (default: 3; 0 turns it off)")
+    parser.add_argument("--live-max-per-scan", type=int, default=1,
+                        help="Live mock trader: most new paper trades from any one scan (default: 1), so the day's "
+                             "trades come from different moments rather than all at once")
+    parser.add_argument("--one-by-one", action="store_true",
+                        help="Download shares one at a time instead of in batches (slower; for troubleshooting)")
     parser.add_argument("--no-entry-rules", action="store_true",
                         help="Turn off the entry rules added on 21 Oct 2026 (seen-both-ways, rejection candle, reclaim distance)")
     parser.add_argument("--top", type=int, default=10, help="Show top N non-conflicting setups by quality score; 0 means no cap (default: 10)")
@@ -862,7 +903,9 @@ def main() -> None:
         universe = [company for company in universe if company.kind != "trust"]
     mode = "watch" if args.watch else "full"
 
-    if args.watch:
+    if args.watch and args.watch_top <= 0:
+        print(f"Watching all {len(universe)} companies...")
+    elif args.watch:
         today = datetime.now(UK_TZ).strftime("%Y-%m-%d")
         tickers = latest_full_watchlist(setups_history, runs, today, args.watch_top)
         if tickers is None:
@@ -880,7 +923,8 @@ def main() -> None:
             universe = universe[:args.limit]
         print(f"Scanning {len(universe)} companies ({'/'.join(sorted(set(company.index for company in universe)))})...")
 
-    all_setups, failures, latest, lags = run_scan(universe, args.interval, args.period, args.delay)
+    all_setups, failures, latest, lags = run_scan(universe, args.interval, args.period, args.delay,
+                                                   batch=not args.one_by_one)
     if latest is None:
         print("No usable data came back (market closed, or Yahoo unavailable). Nothing recorded.")
         sys.exit(1)
@@ -907,7 +951,8 @@ def main() -> None:
     live_rows = []
     if args.live_max_per_day > 0:
         from ftse_live_mock import record_live_mock
-        live_rows = record_live_mock(data_dir, info, [s for s in selected if not s.conflict], args.live_max_per_day)
+        live_rows = record_live_mock(data_dir, info, [s for s in selected if not s.conflict], args.live_max_per_day,
+                                     max_per_scan=args.live_max_per_scan)
     runs = _read_table(data_dir / "runs.csv", RUN_COLUMNS)
     setups_history = _read_table(data_dir / "setups.csv", SETUP_COLUMNS)
     mock_rows = todays_mock_trades(data_dir, info, args.interval)

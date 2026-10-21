@@ -2,7 +2,9 @@
 
 Each full or watch scan calls `record_live_mock` straight after saving its
 setups. New ideas are entered in the order they trigger (best score first
-within one scan), up to a daily limit, one trade per share per day. The entry
+within one scan), up to a daily limit, one trade per share per day, and (from
+22 Oct 2026) at most one new trade from any one scan, so the day's trades come
+from different moments rather than all from the first scan. The entry
 is written to scan_data/live_mock_trades.csv immediately and committed with
 the scan, so the decision is fixed before anyone knows how the price moves.
 
@@ -38,7 +40,7 @@ def read_live(path: Path) -> pd.DataFrame:
 
 
 def record_live_mock(data_dir: Path, info, candidates, max_per_day: int = DEFAULT_MAX_PER_DAY,
-                     last_entry: str = DEFAULT_LAST_ENTRY) -> list[dict]:
+                     last_entry: str = DEFAULT_LAST_ENTRY, max_per_scan: int | None = None) -> list[dict]:
     """Enter new live mock trades from this scan. Returns the rows added.
 
     `info` is the scanner's RunInfo; `candidates` are this scan's non-conflicting
@@ -52,6 +54,8 @@ def record_live_mock(data_dir: Path, info, candidates, max_per_day: int = DEFAUL
     existing = read_live(path)
     today = existing[existing["day"] == info.day]
     slots = max_per_day - len(today)
+    if max_per_scan is not None and max_per_scan > 0:
+        slots = min(slots, max_per_scan)        # spread the day's trades over different scans
     if slots <= 0:
         return []
     taken = set(today["ticker"])

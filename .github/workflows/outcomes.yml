@@ -45,6 +45,11 @@ jobs:
         continue-on-error: true
         run: python -u ftse_momentum_live.py
 
+      # The daily structure pullback (idea 24), paper-traded from 22 Oct 2026 (ftse_structure_live.py).
+      - name: Update structure pullback paper trader
+        continue-on-error: true
+        run: python -u ftse_structure_live.py
+
       - name: Save results to the repo
         run: |
           git config user.name "github-actions[bot]"
@@ -52,6 +57,7 @@ jobs:
           git add --all scan_data
           git add --all -- ftse_outcomes.xlsx 2>/dev/null || true
           git add --all -- ftse_momentum_live.xlsx 2>/dev/null || true
+          git add --all -- ftse_structure_live.xlsx 2>/dev/null || true
           if git diff --cached --quiet; then echo "Nothing new to save."; exit 0; fi
           git commit -m "Outcomes $(TZ=Europe/London date '+%Y-%m-%d %H:%M')"
           for attempt in 1 2 3; do

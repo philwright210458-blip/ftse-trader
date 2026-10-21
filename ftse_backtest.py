@@ -52,6 +52,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 import ftse_outcomes as out
+import ftse_ma_zone as mz
 import ftse_pullback as pb
 import ftse_trade_scanner as sc
 from ftse_sessions import is_session, session_open_close
@@ -78,6 +79,7 @@ REJECTION_CLOSE_LOCATION = sc.REJECTION_CLOSE_LOCATION
 SLOPE_DAYS = 10      # the 50-day average must be higher (buys) or lower (sells) than it was this many trading days earlier
 EMA_SPAN, EMA_LOOKBACK = 20, 4   # 20-period EMA on 15-minute candles, rising/falling over the last 4 candles (1 hour)
 PULLBACK = "Trend pullback (new strategy)"
+MA_ZONE = "MA zone: 9 EMA / 20 SMA (idea 22)"
 SCENARIOS = ["Every idea (pool)", "Top 2 at 10:30", "Live: first 3 triggers"]
 
 
@@ -264,6 +266,33 @@ def confirmation_flags(candidates: pd.DataFrame, intraday) -> pd.DataFrame:
     return candidates.assign(reclaim_confirmed=reclaim_ok, range_confirmed=range_ok, reclaim_atr_distance=reclaim_distance)
 
 
+def ma_zone_signals(company, data: pd.DataFrame | None, interval_min: int, days: set[str]) -> list[dict]:
+    """MA-zone signals on 15-minute candles, at most one per share per day, 09:00-15:30 signal candles."""
+    if data is None or len(data) < mz.SMA_SLOW + mz.SLOPE_BARS + mz.ATR_BARS:
+        return []
+    frame = mz.indicators(data)
+    signals = mz.levels(frame, mz.signal_mask(frame).fillna(False))
+    rows, used = [], set()
+    step = pd.Timedelta(minutes=interval_min)
+    cfg = sc.INDEX_RULES.get(company.index, sc.INDEX_RULES["FTSE 100"])
+    for stamp, row in signals.iterrows():
+        closes_at = stamp + step
+        day, clock = str(stamp.date()), closes_at.strftime("%H:%M")
+        if day not in days or day in used or not ("09:00" <= clock <= "15:30"):
+            continue
+        entry = float(row["close"])
+        risk = max(entry - float(row["stop"]), cfg.min_risk_pct * entry)
+        used.add(day)
+        rows.append({"day": day, "as_of": clock, "data_time": stamp.isoformat(),
+                     "run_time": (closes_at + pd.Timedelta(minutes=2)).strftime("%Y-%m-%d %H:%M:%S"), "mode": "ma_zone",
+                     "company": company.company, "ticker": company.yahoo_ticker, "index": company.index,
+                     "setup": "MA zone", "direction": "Long", "score": round(float(row["slope"]), 4),
+                     "entry": round(entry, 4), "stop": round(entry - risk, 4),
+                     "target": round(entry + mz.REWARD_RISK * risk, 4), "risk_pct": round(risk / entry * 100, 4),
+                     "touches": 0, "conflict": False})
+    return rows
+
+
 def two_way_keys(setups: pd.DataFrame) -> set:
     """(scan, share) pairs where one scan saw both a buy and a sell, counting the weaker 'conflict' setups too."""
     if setups.empty:
@@ -300,7 +329,7 @@ def widen(frame: pd.DataFrame, min_pct: float) -> pd.DataFrame:
 
 
 def score(frame: pd.DataFrame, intraday, horizon: int, now: pd.Timestamp, interval: str,
-          reset_target: bool = False) -> pd.DataFrame:
+          reset_target: bool = False, reward: float = 3.0) -> pd.DataFrame:
     """Score trades. reset_target: once the fill price is known, put the target at 3x the stop distance
     measured from the fill (the stop stays at the level the signal chose)."""
     rows = []
@@ -315,7 +344,7 @@ def score(frame: pd.DataFrame, intraday, horizon: int, now: pd.Timestamp, interv
         if reset_target and sim.fill is not None and math.isfinite(sim.fill):
             risk = abs(sim.fill - float(row["stop"]))
             if risk > 0:
-                target = sim.fill + 3 * risk if row["direction"] == "Long" else sim.fill - 3 * risk
+                target = sim.fill + reward * risk if row["direction"] == "Long" else sim.fill - reward * risk
                 row = row.copy()
                 row["target"] = round(target, 4)
                 sim = out.simulate(row["direction"], float(row["stop"]), target, available, data, horizon, now, interval)
@@ -420,7 +449,10 @@ def build_workbook(summary: pd.DataFrame, daily: pd.DataFrame, trades: pd.DataFr
     note(ws, 5, "Trend pullback (new strategy, idea 17): a different engine, not a filter. Daily trend: price above a rising 50-day "
                 "average (sells: below a falling one). On 15-minute candles the 20-period average must be rising with the 9-period above "
                 "it; the price dips to the 20-period average and the next candle closes back above the 9-period. Stop below the dip, "
-                "target 2x the stop distance, one trade per share per day, signals 09:00-15:30.")
+                "target 2x the stop distance, one trade per share per day, signals 09:00-15:30. MA zone (idea 22): 9 EMA above a "
+                "rising 20 SMA; a candle dips to the 9 EMA or into the zone down to the 20 SMA and closes up in the top half "
+                "of its range; buy at the next open, stop below the dip / 20 SMA, target 2x; slope groups = three equal "
+                "groups by how fast the 20 SMA rose.")
     note(ws, 4, "Caution: results from the past can flatter a model, especially after tweaking. Use this to choose what to test, then "
                 "judge it on new live results. The earliest days in the history had less data for finding zones than the live scanner has.")
     money = [c for c in summary.columns if "(£)" in c]
@@ -469,6 +501,8 @@ def run(args) -> int:
     universe = sc.load_universe(Path(args.universe))
     if args.exclude_trusts:
         universe = [c for c in universe if c.kind != "trust"]
+    if getattr(args, "index", None):
+        universe = [c for c in universe if c.index == args.index]
     if args.limit:
         universe = universe[:args.limit]
     minutes = sc.interval_minutes(args.interval)
@@ -578,6 +612,24 @@ def run(args) -> int:
             done = trades[trades["status"] == "done"]
             daily_cols[f"{PULLBACK}: {scenario} (£)"] = done.groupby("day")["net_gbp"].sum()
             pullback_trades.append(trades.assign(scenario=scenario))
+    print("Scoring: MA zone (idea 22)...")
+    zone_rows = []
+    for company in universe:
+        zone_rows.extend(ma_zone_signals(company, intraday.get(company.yahoo_ticker), minutes, replay_days))
+    zone_names = ["Every signal", "First 3 per day"] + [f"{g} slope" for g in ("Flat", "Medium (about 45 degrees)", "Steep")]
+    zone_sets = {name: pd.DataFrame() for name in zone_names}
+    if zone_rows:
+        zone = with_keys(pd.DataFrame(zone_rows))
+        zone["group"] = mz.slope_groups(zone["score"]).values
+        zone_sets = {"Every signal": zone, "First 3 per day": live_picks(zone)}
+        for group in ("Flat", "Medium (about 45 degrees)", "Steep"):
+            zone_sets[f"{group} slope"] = zone[zone["group"] == group]
+    for scenario, chosen in zone_sets.items():
+        if chosen.empty:
+            summary.append({"Variant": MA_ZONE, "Scenario": scenario, "Completed trades": 0})
+            continue
+        trades = score(chosen, intraday, args.horizon, now, args.interval, reset_target=True, reward=mz.REWARD_RISK)
+        summary.append(summary_row(MA_ZONE, scenario, trades))
     summary_frame = pd.DataFrame(summary)
     daily_frame = pd.DataFrame(daily_cols).sort_index().round(2)
     daily_frame.index.name = "Date"
@@ -607,6 +659,7 @@ def main() -> None:
     parser.add_argument("--horizon", type=int, default=1, help="Holding period in trading days (default: 1 = same day)")
     parser.add_argument("--pick-time", default="10:30")
     parser.add_argument("--exclude-trusts", action="store_true")
+    parser.add_argument("--index", default=None, help="Only shares in this index, e.g. 'FTSE 100'")
     parser.add_argument("--limit", type=int, default=None, help="Only the first N shares (for a quick test)")
     parser.add_argument("--delay", type=float, default=0.2)
     parser.add_argument("--out", default="results/ftse_backtest.xlsx")

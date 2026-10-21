@@ -16,6 +16,10 @@ on:
         description: "Only the first N shares (leave blank for all)"
         required: false
         default: ""
+      index:
+        description: "Only one index, e.g. FTSE 100 (leave blank for both)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -45,12 +49,19 @@ jobs:
         env:
           LIMIT: ${{ inputs.limit }}
           HOLD: ${{ inputs.hold_days }}
+          INDEX: ${{ inputs.index }}
         run: |
           if [ "$HOLD" = "1" ] || [ -z "$HOLD" ]; then OUT=results/ftse_backtest.xlsx; HOLD=1; else OUT="results/ftse_backtest_hold${HOLD}d.xlsx"; fi
           echo "OUT=$OUT" >> "$GITHUB_ENV"
           EXTRA=""
           if [ -n "$LIMIT" ]; then EXTRA="--limit $LIMIT"; fi
-          python -u ftse_backtest.py --exclude-trusts --horizon "$HOLD" $EXTRA --out "$OUT"
+          if [ -n "$INDEX" ]; then
+            OUT="${OUT%.xlsx}_$(echo "$INDEX" | tr -d ' ' | tr 'A-Z' 'a-z').xlsx"
+            echo "OUT=$OUT" >> "$GITHUB_ENV"
+            python -u ftse_backtest.py --exclude-trusts --horizon "$HOLD" $EXTRA --index "$INDEX" --out "$OUT"
+          else
+            python -u ftse_backtest.py --exclude-trusts --horizon "$HOLD" $EXTRA --out "$OUT"
+          fi
 
       - name: Make results downloadable
         uses: actions/upload-artifact@v4

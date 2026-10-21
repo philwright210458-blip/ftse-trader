@@ -1,0 +1,54 @@
+# FTSE MA-zone Daily Backtest: the 9 EMA / 20 SMA pullback (idea 22) on about
+# 10 years of daily candles (ftse_ma_daily_backtest.py). Run it by hand from the
+# Actions tab. Saves results/ftse_ma_zone_daily*.xlsx; doesn't touch live scans.
+
+name: FTSE MA-zone Daily Backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      index:
+        description: "FTSE 100, FTSE 250, or blank for both"
+        required: false
+        default: "FTSE 100"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftse-backtest
+  cancel-in-progress: false
+
+jobs:
+  backtest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install packages
+        run: pip install -r requirements.txt
+      - name: Run backtest
+        env:
+          INDEX: ${{ inputs.index }}
+        run: |
+          OUT="results/ftse_ma_zone_daily_$(echo "${INDEX:-all}" | tr -d ' ' | tr 'A-Z' 'a-z').xlsx"
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+          python -u ftse_ma_daily_backtest.py --index "$INDEX" --out "$OUT"
+      - name: Save results to the repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add "$OUT"
+          if git diff --cached --quiet; then echo "Nothing new to save."; exit 0; fi
+          git commit -m "MA-zone daily backtest $(TZ=Europe/London date '+%Y-%m-%d %H:%M')"
+          for attempt in 1 2 3; do
+            git pull --rebase && git push && exit 0
+            sleep 15
+          done
+          exit 1

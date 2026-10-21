@@ -67,7 +67,7 @@ class ReportTests(unittest.TestCase):
             if block:
                 self.assertEqual(ws.cell(header + 2, 4).value, 7)
         text = " ".join(str(c.value or "") for row in ws for c in row)
-        self.assertIn("If a strategy can't beat the pool", text)
+        self.assertIn("a choosing rule is only useful if its average beats this one", text)
         self.assertNotIn("Break-even target-hit rate", text)
 
     def test_no_risk_multiple_units_shown(self):

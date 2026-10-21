@@ -489,19 +489,25 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
     # ---------------- Strategy comparison ----------------
     comparison = wb.create_sheet("Strategy Comparison", 1)
     put(comparison, 1, ["Alternative research strategies and holding periods"], bold=True)
-    note_row(comparison, 2, f"Each scenario below is a different way of choosing which ideas to trade from the same scans. All figures are pounds "
-                            f"per £{args.position_gbp:.0f} trade after dealing costs, plus stamp duty on buys. Every scenario uses the same entry, "
-                            "exit and cost rules, so they can be compared fairly.", last_col=10, chars_per_line=140)
-    header(comparison, 4, ["Scenario name", "What it does"])
+    note_row(comparison, 2, f"The scanner finds many ideas each day. Each scenario below is a different rule for choosing which of "
+                            f"those ideas to trade, so you can see which rule works best. Every scenario uses the same ideas, the same "
+                            f"entry price (the next 15-minute candle's open), the same stop and target, and the same costs, so the only "
+                            f"difference is the choosing rule. Figures are pounds per £{args.position_gbp:.0f} trade, after 10p dealing "
+                            f"and 50p stamp duty on buys.", last_col=10, chars_per_line=140)
+    header(comparison, 4, ["Scenario name", "What it does, in plain English"])
     guide = [
-        ("Top 1 per day", f"At {args.pick_time} each day, takes the single highest-scoring idea from the first scan available at or after that time."),
-        ("Top 2 per day", f"The same, but takes the two highest-scoring ideas (one per share). This is the main mock trader shown on the Summary and Mock Trades sheets."),
-        ("Top 2 per day, persistent", "Like Top 2, but only ideas that had already shown up in at least two scans that morning, i.e. the setup had held "
-                                      "its shape rather than appearing once. Tests whether waiting for confirmation helps."),
-        (LIVE, "Enters ideas as they trigger during the day, best score first within a scan, up to 3 a day and one per share. "
-               "Shown trade by trade on the Live Mock Trades sheet."),
-        (POOL, "Every idea the scanner flagged, entered once at the first time it appeared that day. This is the benchmark: it is what "
-               "picking ideas at random would earn. If a strategy can't beat the pool, its way of choosing adds nothing."),
+        ("Top 1 per day", f"Once a day at {args.pick_time}, take the scanner's single best-scoring idea. One trade a day, always at "
+                          f"{args.pick_time}. Question it answers: is the scanner's number 1 idea better than an average idea?"),
+        ("Top 2 per day", f"Once a day at {args.pick_time}, take the two best-scoring ideas (two different shares). Two trades a day. "
+                          "This is the 'Mock Trades' sheet."),
+        ("Top 2 per day, persistent", f"Like Top 2, but an idea only counts if the scanner had also flagged it in an earlier scan that "
+                                      f"morning. Example: Burberry flagged at 10:00 and still flagged at {args.pick_time} qualifies; an idea "
+                                      f"seen for the first time at {args.pick_time} does not. Up to two trades a day, sometimes none. "
+                                      "Question: do ideas that have lasted a while do better than brand-new ones?"),
+        (LIVE, "No fixed time: takes ideas as each scan finds them, from the 10:00 scan onwards, until it has 3 for the day "
+               "(never two on the same share). This is the 'Live Mock Trades' sheet."),
+        (POOL, "Every idea the scanner found, as if you had traded all of them (each idea once a day). This is the yardstick: a "
+               "choosing rule is only useful if its average beats this one."),
     ]
     for offset, (name, text) in enumerate(guide, 5):
         put(comparison, offset, [name], bold=True)
@@ -511,13 +517,14 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
         comparison.cell(offset, 1).alignment = Alignment(wrap_text=True, vertical="top")
         comparison.row_dimensions[offset].height = 15 * max(2, math.ceil(len(text) / 120))
     row = 5 + len(guide) + 1
-    note_row(comparison, row, "Columns: Selected = ideas the scenario chose. Completed = trades with a final result. Pending = hold period not "
-                              "finished yet. Missing data = prices unavailable, so left out rather than counted as a loss. Skipped = never "
-                              "entered because the price had already passed the stop or target. Avg net per trade = average profit or loss "
-                              "per trade after all fees. Difference vs pool = how much better (+) or worse (-) than the random-pick benchmark.",
-             last_col=10, chars_per_line=140)
-    note_row(comparison, row + 1, "Hold periods: each section repeats the comparison allowing trades to stay open for up to 1, 2 or 5 trading "
-                                  "days before closing at the price at that time. They are alternatives, not extra trades: don't add sections together.",
+    note_row(comparison, row, "How to read the tables: Selected = trades the rule chose. Completed = trades with a final result. "
+                              "Pending = not finished yet. Missing data = Yahoo's prices had a gap, so the result can't be worked out "
+                              "(left out, not counted as a loss). Skipped = never entered because the price had already jumped past the "
+                              "stop or target. Avg net per trade = average profit or loss per £100 after costs. Difference vs pool = how "
+                              "much better (+) or worse (-) than trading every idea.", last_col=10, chars_per_line=140)
+    note_row(comparison, row + 1, "How much to trust it: with fewer than about 100 completed trades in a row, differences between "
+                                  "scenarios are mostly luck. The three tables are the same comparison with trades allowed to stay open "
+                                  "for up to 1, 2 or 5 trading days; they are alternatives, so don't add them together.",
              last_col=10, chars_per_line=140)
     row += 3
     for horizon in horizons:
@@ -555,8 +562,10 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
                 round(drawdown(flow["net_gbp"].tolist()),2) if len(trades) else unavailable])
             row += 1
         row += 2
-    note_row(comparison, row, "There is no fixed break-even target-hit rate: fills, gaps, target payoffs, timeouts and fees vary. "
-                             "Worst fall from peak uses realised results in exit order and excludes open-position valuation. Completed price events do not establish profitability.", last_col=10, chars_per_line=140)
+    note_row(comparison, row, "Target / Stop / Timeout = how trades ended: reached the target, hit the stop, or were still open at the "
+                             "end of the holding time and closed at the last price. Profitable / Losing count trades after costs, so a "
+                             "trade can reach its target and still lose if the move was smaller than the costs. Worst fall from peak = "
+                             "the biggest drop in running profit, adding trades up in the order they closed.", last_col=10, chars_per_line=140)
     widths(comparison, [36, 11, 12, 12, 15, 12, 22, 19, 22, 31])
 
     # ---------------- Breakdowns ----------------

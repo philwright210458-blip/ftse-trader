@@ -1,6 +1,6 @@
 # FTSE Trader ideas register
 
-*Copy of the Claude Doc "FTSE Trader ideas register", which is the master copy (Phil edits statuses there). Last synced: 21 October 2026.*
+*Copy of the Claude Doc "FTSE Trader ideas register", which is the master copy (Phil edits statuses there). Last synced: 22 October 2026.*
 
 Every idea for improving the model goes here, so nothing gets lost. Ideas are tested side by side in the outcomes workbook before any change to the live scanner, and only once there are enough results (from early November at the soonest).
 
@@ -33,6 +33,7 @@ Every idea for improving the model goes here, so nothing gets lost. Ideas are te
 | 23 | Only take failure tests (the scanner's reclaim trade) in the direction of the higher-timeframe trend, defined by structure (higher highs and higher lows on the daily chart) | Market Structure report (PDF), 21 Oct | Partly tested: the 50-day trend filter (idea 1) made no difference. A structure-based daily trend is not yet tested; quick to add to the 15-minute backtest | Test planned |
 | 24 | Daily structure pullback: an impulse of large same-colour candles, a pullback of 38.2-61.8% (Fibonacci), entry on a strong candle breaking the pullback's top, stop below the whole pullback, target a measured move (the impulse's height added to the pullback low) | Market Structure report (PDF), 21 Oct | Tested 21 Oct, FTSE 100 daily 2016-2026, per £250: only 69 trades (about 6 a year). Measured-move target: +£1.16 before costs, -34p after IG costs, less than simply holding the same share as long (+£1.77). Same entries with a 2x target: +£3.22 before, +£1.72 after IG costs, 7 of 11 years in profit, but too few trades to rule out luck (second half only +14p). Same rules on new data (21 Oct): FTSE 100 over 20 years, 135 trades, 2x target +£2.33 per £250 after IG costs, both halves positive (+£2.69, +£1.97), 11 of 20 years in profit; measured move +£1.09. FTSE 250 over 10 years, 72 trades: 2x target -£2.89, measured move -£1.64. Holds up on the FTSE 100 but not on the FTSE 250. Paper trading on all FTSE 100 and 250 shares from 22 Oct (ftse_structure_live.xlsx) | Testing |
 | 25 | Strong vs weak levels: rank zones by whether the move that made them broke structure, not just by number of touches | Market Structure report (PDF), 21 Oct | Would change how the scanner finds and scores zones; compare strong-level and weak-level ideas in the backtest | New |
+| 26 | Daily-context day trader (Phil's own process): shortlist 5 FTSE 100 shares each morning from the daily chart (trend, key level, yesterday's big mover), watch 30 minutes, enter on a pullback-and-turn in the trend's direction, target at least a 1% move and 2x the stop, same-day spread bet | Phil, 22 Oct | Tested 22 Oct on 58 days of 5-minute candles, per £250: 128 trades spread through the day, -25p before costs, -50p after spread-bet costs (share dealing for buys: -£1.66). 70% hit the stop, 17% reached the 1% target. The entry trigger beat entering at 08:45 (-92p); the shortlist did not beat using every trending share (-40p). Losses in both halves | Rejected |
 
 ## How to use this register
 

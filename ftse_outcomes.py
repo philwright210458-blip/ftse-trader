@@ -556,7 +556,8 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
                                       "Question: do ideas that have lasted a while do better than brand-new ones?"),
         (LIVE, "No fixed time: takes a trade only when a scan finds an idea that passes every entry rule (3 touches, a "
                "rejection candle or a fresh reclaim, and a target worth at least 1.5x the possible loss after costs). At "
-               "most one new trade per scan and 5 a day (3 a day before 23 Oct 2026); some days there may be none. This is "
+               "most one new trade per scan and 5 a day (3 a day before 23 Oct 2026); FTSE 100 shares only from 23 Oct 2026; some days "
+               "there may be none. This is "
                "the 'Live Mock Trades' sheet."),
         (POOL, "Every idea the scanner found, as if you had traded all of them (each idea once a day). This is the yardstick: a "
                "choosing rule is only useful if its average beats this one."),
@@ -707,7 +708,7 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
     mock_sheet(mock, picks["Top 2 per day"],
                f"Each day the mock trader takes the top 2 ideas from the first scan available at or after {args.pick_time}. ", "Scan time")
     mock_sheet(live_sheet, picks.get(LIVE, pd.DataFrame()),
-               "Live mock trader: enters ideas as they trigger during the day, one new trade per scan, up to 5 a day (3 a day before 23 Oct 2026), one per share; only ideas that pass the entry rules, including the check that the target would pay more than the stop could cost after costs. "
+               "Live mock trader: enters ideas as they trigger during the day, one new trade per scan, up to 5 a day (3 a day before 23 Oct 2026), one per share, FTSE 100 shares only from 23 Oct 2026; only ideas that pass the entry rules, including the check that the target would pay more than the stop could cost after costs. "
                "Each entry was saved the moment the scan ran (see scan_data/live_mock_trades.csv); signal time = when that scan finished. "
                "It is filled at the open of the next 15-minute candle after the signal. ", "Signal time")
 

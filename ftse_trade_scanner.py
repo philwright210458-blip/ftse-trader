@@ -739,7 +739,7 @@ def _write_mock_sheet(ws, rows: list[dict], info: "RunInfo") -> None:
                 cell.fill = PatternFill("solid", fgColor=colour)
     if not rows:
         ws.append(["", "", "No mock trades yet today."])
-    _add_note(ws, f"Mock trades made today (up to 5, only at trigger points), with progress from completed 15-minute candles up to {info.as_of} UK. "
+    _add_note(ws, f"Mock trades made today (up to 5, FTSE 100 shares only, only at trigger points), with progress from completed 15-minute candles up to {info.as_of} UK. "
                   "Provisional: Yahoo prices can be up to 15 minutes behind. The final result is worked out at 17:05 "
                   "in ftse_outcomes.xlsx (Live Mock Trades sheet). Costs per £100: 10p dealing, plus 50p stamp duty on buys.")
 
@@ -917,6 +917,9 @@ def main() -> None:
     parser.add_argument("--live-max-per-scan", type=int, default=1,
                         help="Live mock trader: most new paper trades from any one scan (default: 1), so the day's "
                              "trades come from different moments rather than all at once")
+    parser.add_argument("--live-index", default="FTSE 100",
+                        help="Live mock trader: only trade shares in this index (default: FTSE 100, whose Yahoo data is "
+                             "more complete); use '' for every share. The scan itself still covers every share")
     parser.add_argument("--one-by-one", action="store_true",
                         help="Download shares one at a time instead of in batches (slower; for troubleshooting)")
     parser.add_argument("--no-entry-rules", action="store_true",
@@ -986,7 +989,9 @@ def main() -> None:
     live_rows = []
     if args.live_max_per_day > 0:
         from ftse_live_mock import record_live_mock
-        live_rows = record_live_mock(data_dir, info, [s for s in selected if not s.conflict], args.live_max_per_day,
+        live_candidates = [s for s in selected if not s.conflict
+                           and (not args.live_index or s.index_label == args.live_index)]
+        live_rows = record_live_mock(data_dir, info, live_candidates, args.live_max_per_day,
                                      max_per_scan=args.live_max_per_scan)
     runs = _read_table(data_dir / "runs.csv", RUN_COLUMNS)
     setups_history = _read_table(data_dir / "setups.csv", SETUP_COLUMNS)

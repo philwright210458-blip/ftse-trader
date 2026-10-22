@@ -9,7 +9,7 @@ The timers are on cron-job.org; each one starts a GitHub workflow.
 | Time (UK) | Workflow | What it does | Results |
 | --- | --- | --- | --- |
 | 08:15 | FTSE Full Scan (`full_scan.yml`) | Scans every share for range and reclaim setups | `ftse_scan_latest.xlsx`, `scan_data/` |
-| 08:31, then every 15 min to 15:31 | FTSE Watch (`watch.yml`) | Scans every share again; live mock trades: at most 1 new trade per scan, 3 a day | `ftse_scan_latest.xlsx`, `scan_data/live_mock_trades.csv` |
+| 08:31, then every 15 min to 15:31 | FTSE Watch (`watch.yml`) | Scans every share again; live mock trades only at trigger points: at most 1 new trade per scan, 5 a day | `ftse_scan_latest.xlsx`, `scan_data/live_mock_trades.csv` |
 | 17:05 | FTSE Outcomes (`outcomes.yml`) | Scores the day's ideas and mock trades; also runs the momentum paper trader | `ftse_outcomes.xlsx`, `ftse_momentum_live.xlsx` |
 | after each scan | Publish scans (`publish_scans.yml`) | Sends scan results to the shared dashboard | (dashboard) |
 
@@ -19,7 +19,7 @@ Workflows run by hand from the Actions tab: **FTSE Backtest**, **FTSE Range v2 B
 
 | Model | Code | Status |
 | --- | --- | --- |
-| 15-minute range and breakout scanner (the live one) | `ftse_trade_scanner.py`, `ftse_live_mock.py`, `ftse_outcomes.py` | Running; backtest negative after costs. From 21 Oct 2026 it also skips shares seen both ways, needs a rejection candle for range trades and a close 0.5 ATR beyond the edge for reclaims (`--no-entry-rules` turns these off) |
+| 15-minute range and breakout scanner (the live one) | `ftse_trade_scanner.py`, `ftse_live_mock.py`, `ftse_outcomes.py` | Running; backtest negative after costs. From 21 Oct 2026 it also skips shares seen both ways, needs a rejection candle for range trades and a fresh close 0.5 ATR beyond the edge for reclaims; from 23 Oct it also skips ideas whose target would not pay at least 1.5x the possible loss after costs (`--no-entry-rules` turns these off) |
 | Trend pullback (idea 17) | `ftse_pullback.py` (tested by `ftse_backtest.py`) | Rejected |
 | Range model version 2 (Patrick Nill's method, rebuilt) | `ftse_range_v2.py`, `ftse_range_backtest.py` | Rejected on shares and the index |
 | Claude's model: monthly momentum | `ftse_momentum.py` (backtest), `ftse_momentum_live.py` (paper trading from 30 Oct 2026) | Paper trading |

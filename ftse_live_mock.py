@@ -24,7 +24,7 @@ import pandas as pd
 LIVE_FILENAME = "live_mock_trades.csv"
 LIVE_COLUMNS = ["day", "signal_time", "data_time", "mode", "trade_no", "company", "ticker", "index", "setup",
                 "direction", "score", "entry", "stop", "target", "risk_pct", "key"]
-DEFAULT_MAX_PER_DAY = 3
+DEFAULT_MAX_PER_DAY = 5
 DEFAULT_LAST_ENTRY = "15:30"
 
 

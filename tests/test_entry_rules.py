@@ -19,8 +19,12 @@ def setup(kind, direction, company="Alpha", score=80.0):
 
 class EntryRuleTests(unittest.TestCase):
     def test_reclaim_distance(self):
-        self.assertEqual(sc.entry_rule_note(setup("Breakout", "Long"), bars((99.0, 99.8, 98.9, 99.6))), "")
-        self.assertIn("Reclaim", sc.entry_rule_note(setup("Breakout", "Long"), bars((99.0, 99.4, 98.9, 99.3))))
+        def reclaim(last):
+            frame = bars(last)
+            frame.iloc[-2] = [99.2, 99.3, 98.7, 98.8]          # the candle before closed below the zone
+            return frame
+        self.assertEqual(sc.entry_rule_note(setup("Breakout", "Long"), reclaim((99.0, 99.8, 98.9, 99.6))), "")
+        self.assertIn("Reclaim", sc.entry_rule_note(setup("Breakout", "Long"), reclaim((99.0, 99.4, 98.9, 99.3))))
 
     def test_rejection_candle(self):
         self.assertEqual(sc.entry_rule_note(setup("Range", "Long"), bars((99.6, 99.8, 98.9, 99.7))), "")
@@ -52,3 +56,23 @@ class EntryRuleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TriggerRuleTests(unittest.TestCase):
+    """22 Oct 2026: fresh reclaims only, and only trades whose target is worth it after costs."""
+
+    def test_worth_trading_after_costs(self):
+        # Hammerson-like buy: 0.42% stop, 1.25% target -> 65p gain v £1.02 loss after costs: skipped
+        buy = sc.TradeSetup("Ham", "H.L", "FTSE 250", "Range", "Long", sc.Zone(346.9, 347.2), 348.0, 346.55, 352.35, "")
+        self.assertIn("Not worth it", sc.worth_trading_note(buy))
+        # NatWest-like sell: 0.99% stop, 2.97% target -> £2.87 v £1.09: kept
+        sell = sc.TradeSetup("Nat", "N.L", "FTSE 100", "Breakout", "Short", sc.Zone(640, 641), 641.0, 647.35, 621.94, "")
+        self.assertEqual(sc.worth_trading_note(sell), "")
+
+    def test_reclaim_must_be_on_latest_candle(self):
+        index = pd.date_range("2026-09-01 08:00", periods=20, freq="15min", tz=sc.UK_TZ)
+        rows = [(100.0, 100.5, 99.5, 100.0)] * 17 + [(99.2, 99.3, 98.6, 98.8), (98.8, 99.8, 98.7, 99.7), (99.7, 99.9, 99.5, 99.8)]
+        df = pd.DataFrame(rows, columns=["open", "high", "low", "close"], index=index)
+        s = setup("Breakout", "Long")
+        self.assertFalse(sc.reclaim_is_fresh(s, df))           # back above at the 19th candle, now two candles on
+        self.assertTrue(sc.reclaim_is_fresh(s, df.iloc[:-1]))  # judged on the candle that reclaimed

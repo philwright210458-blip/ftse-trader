@@ -409,6 +409,9 @@ RECLAIM_DISPLACEMENT_ATR = 0.5     # reclaim: close at least this far back acros
 REJECTION_MIN_RANGE_ATR = 0.75     # range: the signal candle's high-low range is at least this
 REJECTION_WICK_SHARE = 0.4         # range: wick on the level's side is at least this share of the candle
 REJECTION_CLOSE_LOCATION = 0.6     # range: close in the top 40% of the candle for buys (bottom 40% for sells)
+# Added 22 Oct 2026 (Phil: only trade at a trigger point that could make a profit):
+MIN_NET_REWARD_RISK = 1.5          # target's gain after costs must be at least 1.5x the stop's loss after costs
+COSTS_PCT = {"Long": 0.60, "Short": 0.10}   # per £100: dealing 0.10% + stamp duty 0.5% on buys
 
 
 def entry_rule_note(setup: TradeSetup, df: pd.DataFrame) -> str:
@@ -421,10 +424,15 @@ def entry_rule_note(setup: TradeSetup, df: pd.DataFrame) -> str:
     long = setup.direction == "Long"
     if atr <= 0:
         return "No typical candle range to measure against."
+    cost_note = worth_trading_note(setup)
     if setup.setup_type == "Breakout":
         need = RECLAIM_DISPLACEMENT_ATR * atr
         ok = c >= setup.zone.low + need if long else c <= setup.zone.high - need
-        return "" if ok else f"Reclaim close less than {RECLAIM_DISPLACEMENT_ATR} ATR back across the zone edge."
+        if not ok:
+            return f"Reclaim close less than {RECLAIM_DISPLACEMENT_ATR} ATR back across the zone edge."
+        if not reclaim_is_fresh(setup, df):
+            return "Reclaim happened on an earlier candle, not the latest one."
+        return cost_note
     span = h - l
     if span <= 0 or span < REJECTION_MIN_RANGE_ATR * atr:
         return f"No rejection candle: candle smaller than {REJECTION_MIN_RANGE_ATR} ATR."
@@ -436,6 +444,30 @@ def entry_rule_note(setup: TradeSetup, df: pd.DataFrame) -> str:
         return "No rejection candle: the candle did not reach the zone."
     if wick < REJECTION_WICK_SHARE or location < REJECTION_CLOSE_LOCATION:
         return "No rejection candle: wick too short or close not far enough from the level."
+    return cost_note
+
+
+def reclaim_is_fresh(setup: TradeSetup, df: pd.DataFrame) -> bool:
+    """The reclaim must complete on the latest candle: the close just before the confirming close(s)
+    was still on the far side of the zone edge."""
+    confirm = INDEX_RULES.get(setup.index_label, INDEX_RULES["FTSE 100"]).confirmation_closes
+    if len(df) < confirm + 1:
+        return False
+    before = float(df["close"].iloc[-confirm - 1])
+    return before < setup.zone.low if setup.direction == "Long" else before > setup.zone.high
+
+
+def worth_trading_note(setup: TradeSetup) -> str:
+    """Empty if reaching the target would gain at least MIN_NET_REWARD_RISK times what hitting the stop
+    would lose, both after costs (per £100: 60p on buys, 10p on sells)."""
+    entry = setup.entry
+    risk = abs(entry - setup.stop) / entry * 100
+    reward = abs(setup.target - entry) / entry * 100
+    cost = COSTS_PCT.get(setup.direction, 0.6)
+    net_reward, net_risk = reward - cost, risk + cost
+    if net_risk <= 0 or net_reward < MIN_NET_REWARD_RISK * net_risk:
+        return (f"Not worth it after costs: target would make about £{net_reward:.2f} per £100 against a possible "
+                f"£{net_risk:.2f} loss.")
     return ""
 
 
@@ -707,7 +739,7 @@ def _write_mock_sheet(ws, rows: list[dict], info: "RunInfo") -> None:
                 cell.fill = PatternFill("solid", fgColor=colour)
     if not rows:
         ws.append(["", "", "No mock trades yet today."])
-    _add_note(ws, f"Mock trades made today (up to 3), with progress from completed 15-minute candles up to {info.as_of} UK. "
+    _add_note(ws, f"Mock trades made today (up to 5, only at trigger points), with progress from completed 15-minute candles up to {info.as_of} UK. "
                   "Provisional: Yahoo prices can be up to 15 minutes behind. The final result is worked out at 17:05 "
                   "in ftse_outcomes.xlsx (Live Mock Trades sheet). Costs per £100: 10p dealing, plus 50p stamp duty on buys.")
 
@@ -880,8 +912,8 @@ def main() -> None:
                              "freshest candle in the scan; 0 turns the guard off (default: 30)")
     parser.add_argument("--exclude-trusts", action="store_true",
                         help="Leave out investment trusts and funds (the 'type' column in ftse_universe.csv)")
-    parser.add_argument("--live-max-per-day", type=int, default=3,
-                        help="Live mock trader: most new paper trades entered per day, in the order they trigger (default: 3; 0 turns it off)")
+    parser.add_argument("--live-max-per-day", type=int, default=5,
+                        help="Live mock trader: most new paper trades entered per day, in the order they trigger (default: 5; 0 turns it off)")
     parser.add_argument("--live-max-per-scan", type=int, default=1,
                         help="Live mock trader: most new paper trades from any one scan (default: 1), so the day's "
                              "trades come from different moments rather than all at once")

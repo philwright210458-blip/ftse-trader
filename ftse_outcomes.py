@@ -460,32 +460,24 @@ def r_fill(value: float | None) -> str | None:
     return GOOD if value > 0 else BAD
 
 
+MONEY_FORMAT = '"£"#,##0.00;[Red]-"£"#,##0.00;"£"0.00'
+TRADE_HEADERS = ["Date", "Signal time", "Trade no.", "Company", "Ticker", "Direction", "Setup", "Entry", "Stop", "Target",
+                 "Result", "Exit time", "Amount traded (£)", "Gross profit / loss (£)", "Dealing costs (£)",
+                 "Stamp duty (£)", "Net after all fees (£)", "Realised running net (£)"]
+TOTALS_ROW, COMPARE_ROW, TRADES_HEADER_ROW = 5, 8, 12
+
+
 def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict[str, pd.DataFrame],
                  outcomes: pd.DataFrame, kinds: dict[str, str], generated: str) -> Workbook:
-    horizons = [int(h) for h in args.horizons.split(",")]
+    """Two sheets: the live mock trades (with totals and one comparison line on top) and the daily balance."""
     main_h = args.horizon
     wb = Workbook()
-    summary, breakdown, live_sheet, daily, allout = wb.active, *(wb.create_sheet(n) for n in ("Breakdowns", "Live Mock Trades", "Daily", "All Outcomes"))
-    summary.title = "Summary"
+    live_sheet = wb.active
+    live_sheet.title = "Live Mock Trades"
+    daily = wb.create_sheet("Daily")
+    chosen = picks.get(LIVE, pd.DataFrame())
+    at_h = outcomes[outcomes["horizon"] == main_h]
 
-    def resolved(keys: pd.Series, horizon: int) -> pd.DataFrame:
-        part = outcomes[(outcomes["horizon"] == horizon) & (outcomes["key"].isin(set(keys)))]
-        return part
-
-    def trades_for(frame: pd.DataFrame, horizon: int) -> pd.DataFrame:
-        """Completed trades for a set of setups, with costs, in time order."""
-        joined = frame.merge(outcomes[outcomes["horizon"] == horizon], on="key", suffixes=("", "_o"))
-        joined = joined[joined["status"] == "done"]
-        if joined.empty:
-            return joined
-        joined = add_costs(joined, args.cost_pct, args.stamp_duty_pct)
-        return realised_order(joined)
-
-    live_picks = picks.get(LIVE, pd.DataFrame())
-    daily_names = [LIVE]
-    scenarios = {LIVE: live_picks, POOL: pool}
-
-    # Main results use the actual per-trade cash flows, never average R * £100.
     def cash_flows(trades):
         if trades.empty:
             return pd.DataFrame(columns=["gross_gbp", "dealing_gbp", "stamp_gbp", "net_gbp"])
@@ -496,302 +488,122 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
         result["net_gbp"] = (result["gross_gbp"] - result["dealing_gbp"] - result["stamp_gbp"]).round(2)
         return result
 
-    def coverage(frame, horizon):
-        rows = resolved(frame["key"], horizon) if not frame.empty else outcomes.iloc[:0]
-        counts = {state: int((rows["status"] == state).sum()) for state in ("done", "skipped", "nodata")}
-        counts["pending"] = len(frame) - sum(counts.values())
-        return counts
+    def completed(frame: pd.DataFrame) -> pd.DataFrame:
+        if frame.empty:
+            return pd.DataFrame()
+        joined = frame.merge(at_h, on="key", suffixes=("", "_o"))
+        joined = joined[joined["status"] == "done"]
+        return realised_order(add_costs(joined, args.cost_pct, args.stamp_duty_pct)) if not joined.empty else joined
 
-    top2 = live_picks
-    main_trades = trades_for(top2, main_h) if not top2.empty else pd.DataFrame()
-    cash = cash_flows(main_trades)
-    counts = coverage(top2, main_h)
-    profits = int((cash["net_gbp"] > 1e-9).sum())
-    losses = int((cash["net_gbp"] < -1e-9).sum())
-    flat = len(main_trades) - profits - losses
-    days = sorted(set(candidates["day"])) if not candidates.empty else []
-    put(summary, 1, ["FTSE paper research: main results"], bold=True)
-    note_row(summary, 2, f"Generated {generated}. Corrected simulation: {SIMULATION_VERSION}. Research only; no real orders.", last_col=8, chars_per_line=110)
-    note_row(summary, 3, f"Live mock trader: trades taken at trigger points during the day (up to 5 a day), held up to {main_h} trading day(s). "
-                         f"£{args.position_gbp:.2f} per simulated trade. These are recorded-history results, not a current trading shortlist.", last_col=8, chars_per_line=110)
-    main_days = main_trades["day"].nunique() if not main_trades.empty else 0
-    note_row(summary, 4, f"Evidence: {len(main_trades)} completed trades across {main_days} market day(s); pending and missing results are excluded. "
-                         "This is a descriptive sample, not proof of an edge or a forecast.", last_col=8, chars_per_line=110)
-    header(summary, 5, ["Net realised (£)", "Completed", "Profitable", "Losing", "Flat"])
-    put(summary, 6, [round(float(cash["net_gbp"].sum()), 2) if len(main_trades) or top2.empty else "Awaiting results", len(main_trades), profits, losses, flat], bold=True)
-    header(summary, 8, ["Gross P/L (£)", "Dealing costs (£)", "Stamp duty (£)", "Net realised (£)"])
-    bridge = [round(float(cash["gross_gbp"].sum()), 2), round(-float(cash["dealing_gbp"].sum()), 2),
-              round(-float(cash["stamp_gbp"].sum()), 2), round(float(cash["net_gbp"].sum()), 2)]
-    put(summary, 9, bridge if len(main_trades) or top2.empty else ["Awaiting results"] * 4)
-    header(summary, 11, ["Selected ideas", "Completed", "Skipped", "Pending", "Missing data"])
-    put(summary, 12, [len(top2), counts["done"], counts["skipped"], counts["pending"], counts["nodata"]])
-    period = f"{days[0]} to {days[-1]} ({len(days)} recorded session date(s))" if days else "No scan dates recorded"
-    note_row(summary, 14, f"Coverage: {period}. Selected ideas = completed + skipped + pending + missing data. "
-                          "Missing data is not a completed loss or a zero return; unresolved ideas are excluded from P/L.", last_col=8, chars_per_line=110)
-    note_row(summary, 15, "Profitable, losing and flat use each completed trade's net pounds after dealing costs and stamp duty. "
-                          "Target/stop/timeout labels describe price events and are not profit categories.", last_col=8, chars_per_line=110)
-    outcomes_main = main_trades["outcome"] if not main_trades.empty else pd.Series(dtype=str)
-    header(summary, 17, ["Price event", "Target", "Stop", "Timeout"])
-    put(summary, 18, ["Completed trades", int((outcomes_main == "target").sum()), int((outcomes_main == "stop").sum()), int((outcomes_main == "timeout").sum())])
-    note_row(summary, 20, "Currency components are rounded per trade to pennies, then totalled. Net realised pounds reconcile with Live Mock Trades and the final Daily pounds balance. "
-                          "Open positions are not valued here. Trade fills are synthetic, based on completed candle evidence; missing intervals remain unresolved.", last_col=8, chars_per_line=110)
-    note_row(summary, 22, "Use Strategy Comparison to compare with every idea the scanner found, and other holding periods. "
-                          "A short or profitable sample does not demonstrate an edge; same-day trades may be correlated.", last_col=8, chars_per_line=110)
-    widths(summary, [23, 20, 20, 20, 19, 3, 3, 3])
-    summary.freeze_panes = "A5"
+    trades = completed(chosen)
+    cash = cash_flows(trades)
+    done = len(trades)
+    waiting = len(chosen) - done
 
-    # ---------------- Strategy comparison ----------------
-    comparison = wb.create_sheet("Strategy Comparison", 1)
-    put(comparison, 1, ["Alternative research strategies and holding periods"], bold=True)
-    note_row(comparison, 2, f"The scanner finds many ideas each day. Each scenario below is a rule for choosing which of "
-                            f"those ideas to trade, so you can see whether the live trader's rules help. Every scenario uses the same ideas, the same "
-                            f"entry price (the next 15-minute candle's open), the same stop and target, and the same costs, so the only "
-                            f"difference is the choosing rule. Figures are pounds per £{args.position_gbp:.0f} trade, after 10p dealing "
-                            f"and 50p stamp duty on buys.", last_col=10, chars_per_line=140)
-    header(comparison, 4, ["Scenario name", "What it does, in plain English"])
-    guide = [
-        (LIVE, "No fixed time: takes a trade only when a scan finds an idea that passes every entry rule (3 touches, a "
-               "rejection candle or a fresh reclaim, and a target worth at least 1.5x the possible loss after costs). At "
-               "most one new trade per scan and 5 a day (3 a day before 23 Oct 2026); FTSE 100 shares only from 23 Oct 2026; some days "
-               "there may be none. This is "
-               "the 'Live Mock Trades' sheet."),
-        (POOL, "Every idea the scanner found, as if you had traded all of them (each idea once a day). This is the yardstick: a "
-               "choosing rule is only useful if its average beats this one."),
-    ]
-    for offset, (name, text) in enumerate(guide, 5):
-        put(comparison, offset, [name], bold=True)
-        comparison.cell(offset, 2, text).font = Font(name="Arial")
-        comparison.merge_cells(start_row=offset, start_column=2, end_row=offset, end_column=10)
-        comparison.cell(offset, 2).alignment = Alignment(wrap_text=True, vertical="top")
-        comparison.cell(offset, 1).alignment = Alignment(wrap_text=True, vertical="top")
-        comparison.row_dimensions[offset].height = 15 * max(2, math.ceil(len(text) / 120))
-    row = 5 + len(guide) + 1
-    note_row(comparison, row, "How to read the tables: Selected = trades the rule chose. Completed = trades with a final result. "
-                              "Pending = not finished yet. Missing data = Yahoo's prices had a gap, so the result can't be worked out "
-                              "(left out, not counted as a loss). Skipped = never entered because the price had already jumped past the "
-                              "stop or target. Avg net per trade = average profit or loss per £100 after costs. Difference vs pool = how "
-                              "much better (+) or worse (-) than trading every idea.", last_col=10, chars_per_line=140)
-    note_row(comparison, row + 1, "How much to trust it: with fewer than about 100 completed trades in a row, differences between "
-                                  "scenarios are mostly luck. The three tables are the same comparison with trades allowed to stay open "
-                                  "for up to 1, 2 or 5 trading days; they are alternatives, so don't add them together.",
-             last_col=10, chars_per_line=140)
-    row += 3
-    for horizon in horizons:
-        put(comparison, row, [f"Hold up to {horizon} exchange session(s): core comparison"], bold=True)
-        header(comparison, row+1, ["Scenario", "Selected", "Completed", "Pending", "Missing data", "Skipped", "Avg net per trade (£)", "Pool avg per trade (£)", "Difference vs pool (£)", "Result status"])
-        comparison.row_dimensions[row+1].height = 36
-        row += 2
-        section = []
-        for name, frame in scenarios.items():
-            trades = trades_for(frame, horizon) if not frame.empty else pd.DataFrame()
-            other = trades_for(pool, horizon) if not pool.empty else pd.DataFrame()
-            totals = coverage(frame, horizon)
-            flow = cash_flows(trades)
-            positive = int((flow["net_gbp"] > 1e-9).sum())
-            negative = int((flow["net_gbp"] < -1e-9).sum())
-            avg = float(pounds(trades, "r_net_stamp", args.position_gbp).mean()) if len(trades) else None
-            baseline = float(pounds(other, "r_net_stamp", args.position_gbp).mean()) if len(other) else None
-            events = trades["outcome"] if len(trades) else pd.Series(dtype=str)
-            state = "Recorded completed results" if len(trades) else "Awaiting results" if len(frame) else "Not available: no ideas"
-            unavailable = "Awaiting results" if len(frame) else "Not available"
-            put(comparison, row, [name, len(frame), totals["done"], totals["pending"], totals["nodata"], totals["skipped"],
-                round(avg, 2) if avg is not None else unavailable,
-                round(baseline, 2) if baseline is not None else "Not available",
-                round(avg-baseline, 2) if avg is not None and baseline is not None else "Not available", state])
-            section.append((name,trades,flow,positive,negative,events,state,unavailable))
-            row += 1
-        row += 1
-        put(comparison, row, [f"Hold up to {horizon} session(s): supporting price events and realised cash"], bold=True)
-        header(comparison, row+1, ["Scenario", "Completed", "Target", "Stop", "Timeout", "Profitable", "Losing", "Flat", "Net realised (£)", "Worst fall from peak (£)"])
-        comparison.row_dimensions[row+1].height = 36
-        row += 2
-        for name,trades,flow,positive,negative,events,state,unavailable in section:
-            put(comparison,row,[name,len(trades),int((events=="target").sum()),int((events=="stop").sum()),int((events=="timeout").sum()),
-                positive,negative,len(trades)-positive-negative,round(float(flow["net_gbp"].sum()),2) if len(trades) else unavailable,
-                round(drawdown(flow["net_gbp"].tolist()),2) if len(trades) else unavailable])
-            row += 1
-        row += 2
-    note_row(comparison, row, "Target / Stop / Timeout = how trades ended: reached the target, hit the stop, or were still open at the "
-                             "end of the holding time and closed at the last price. Profitable / Losing count trades after costs, so a "
-                             "trade can reach its target and still lose if the move was smaller than the costs. Worst fall from peak = "
-                             "the biggest drop in running profit, adding trades up in the order they closed.", last_col=10, chars_per_line=140)
-    widths(comparison, [36, 11, 12, 12, 15, 12, 22, 19, 22, 31])
-
-    # ---------------- Breakdowns ----------------
-    base = trades_for(pool, main_h) if not pool.empty else pd.DataFrame()
-    overall = float(pounds(base, "r_net_stamp", args.position_gbp).mean()) if not base.empty else None
-    note_row(breakdown, 1, f"Pool first observations, hold up to {main_h} exchange session(s). Figures are pounds per £{args.position_gbp:.0f} trade "
-                            "after dealing costs and stamp duty. "
-                            "Each section partitions the same completed pool; do not add sections together. Trades sharing market days may be correlated.", last_col=7, chars_per_line=125, bold=True)
-    row = 4
-    if not base.empty:
-        base = base.assign(kind=base["ticker"].map(lambda t: "Trust" if kinds.get(t) == "trust" else "Company"),
-            score_band=pd.cut(base["score"], [-float("inf"), 50, 60, 70, 80, 90, float("inf")], right=False,
-                              labels=["under 50", "50-60", "60-70", "70-80", "80-90", "90+"]),
-            touch_band=pd.cut(base["touches"], [-float("inf"), 5, 7, 10, float("inf")], right=False,
-                              labels=["under 5", "5-6", "7-9", "10+"]))
-        for title, column in (("Quality score", "score_band"), ("Setup", "setup"), ("Direction", "direction"),
-                              ("Index", "index"), ("Meaningful touches", "touch_band"), ("Instrument type", "kind")):
-            if column == "touch_band":
-                cfg100, cfg250 = sc.INDEX_RULES["FTSE 100"], sc.INDEX_RULES["FTSE 250"]
-                note_row(breakdown,row, f"Meaningful touches: separate zone tests at least {cfg100.min_touch_gap_bars} bars apart. Price must move away by at least "
-                         f"{cfg100.rearm_move_pct*100:g}% (FTSE 100) or {cfg250.rearm_move_pct*100:g}% (FTSE 250) before a new test counts.", last_col=6, chars_per_line=120)
-                row += 2
-            put(breakdown, row, [title], bold=True)
-            header(breakdown, row + 1, ["Group", "Completed", "Share of total", "Avg net per trade (£)", "Difference vs overall (£)", "Sample: trades / market days"])
-            row += 2
-            put(breakdown, row, ["Overall pool baseline", len(base), 1., round(overall, 2), 0., f"{len(base)} trades / {base['day'].nunique()} market days"], fill=NEUTRAL)
-            breakdown.cell(row, 3).number_format = "0.0%"
-            row += 1
-            for label, group in base.groupby(column, observed=True):
-                average = float(pounds(group, "r_net_stamp", args.position_gbp).mean())
-                put(breakdown, row, [str(label), len(group), len(group)/len(base), round(average, 2), round(average-overall, 2),
-                                     f"{len(group)} trades / {group['day'].nunique()} market days"])
-                breakdown.cell(row, 3).number_format = "0.0%"
-                row += 1
-            row += 2
-        put(breakdown, row, ["Supporting price-event counts"], bold=True)
-        header(breakdown, row+1, ["Scope", "Completed", "Target", "Stop", "Timeout"])
-        put(breakdown, row+2, ["Overall completed pool", len(base), int((base["outcome"]=="target").sum()),
-                               int((base["outcome"]=="stop").sum()), int((base["outcome"]=="timeout").sum())])
+    # ---------------- Live mock trades: title and totals ----------------
+    put(live_sheet, 1, ["Live mock trades (paper only, no real orders)"], bold=True)
+    note_row(live_sheet, 2, f"Generated {generated}. The live mock trader enters ideas as they trigger during the day: one new trade "
+                            "per scan, up to 5 a day (3 a day before 23 Oct 2026), one per share, FTSE 100 shares only from 23 Oct 2026, "
+                            "and only ideas that pass the entry rules, including the check that the target would pay more than the stop "
+                            "could cost after costs. Each entry was saved the moment the scan ran (scan_data/live_mock_trades.csv) and "
+                            "is filled at the open of the next 15-minute candle. Trades close at the target, the stop, or the end of the day.",
+             last_col=18, chars_per_line=190, fill=NEUTRAL)
+    note_row(live_sheet, 3, f"Each trade is £{args.position_gbp:.0f}. Dealing costs = {args.cost_pct:.2f}% (buy and sell together); stamp duty "
+                            f"= {args.stamp_duty_pct:.2f}% on buys of real shares (sells never pay it). Grey rows were never entered or "
+                            "have no result yet.", last_col=18, chars_per_line=190, fill=NEUTRAL)
+    header(live_sheet, TOTALS_ROW - 1, ["Net after all fees (£)", "Completed", "Profitable", "Losing", "Flat", "Not resolved / skipped",
+                                        "Gross profit / loss (£)", "Dealing costs (£)", "Stamp duty (£)"])
+    live_sheet.row_dimensions[TOTALS_ROW - 1].height = 32
+    profits, losses = int((cash["net_gbp"] > 1e-9).sum()), int((cash["net_gbp"] < -1e-9).sum())
+    if done or chosen.empty:
+        put(live_sheet, TOTALS_ROW, [round(float(cash["net_gbp"].sum()), 2), done, profits, losses, done - profits - losses, waiting,
+                                     round(float(cash["gross_gbp"].sum()), 2), round(-float(cash["dealing_gbp"].sum()), 2),
+                                     round(-float(cash["stamp_gbp"].sum()), 2)], bold=True)
     else:
-        put(breakdown, row, ["No completed pool trades; baseline and subsets are unavailable."])
-    widths(breakdown, [28, 13, 16, 16, 22, 34, 3])
-    breakdown.freeze_panes = "A6"
+        put(live_sheet, TOTALS_ROW, ["Awaiting results", 0, 0, 0, 0, waiting, "Awaiting results", "Awaiting results", "Awaiting results"],
+            bold=True)
 
-    # ---------------- Mock trades ----------------
-    fees_note = (f"Each mock trade is £{args.position_gbp:.0f} of shares bought (or sold short). "
-                 f"Dealing costs = {args.cost_pct:.2f}% of the position (buy and sell together). Stamp duty = {args.stamp_duty_pct:.2f}% of the position "
-                 f"on long trades in real shares (spread bets and CFDs don't pay it, and shorts never do). "
-                 f"Grey rows were never entered (price had already passed the stop or target, or no trade within 30 min).")
+    # ---------------- One comparison line ----------------
+    header(live_sheet, COMPARE_ROW - 1, ["Comparison", "Completed", "Average per trade (£)", "Every idea: completed",
+                                         "Every idea: average per trade (£)", "Difference (£)"])
+    live_sheet.row_dimensions[COMPARE_ROW - 1].height = 32
+    every = completed(pool)
+    avg = float(pounds(trades, "r_net_stamp", args.position_gbp).mean()) if done else None
+    base = float(pounds(every, "r_net_stamp", args.position_gbp).mean()) if len(every) else None
+    put(live_sheet, COMPARE_ROW, ["Live trades vs every idea", done, round(avg, 2) if avg is not None else "Awaiting results",
+                                  len(every), round(base, 2) if base is not None else "Not available",
+                                  round(avg - base, 2) if avg is not None and base is not None else "Not available"])
+    note_row(live_sheet, COMPARE_ROW + 1, "Every idea = the first sighting each day of every idea the scanner flagged (all shares, before the "
+                                          "entry rules), traded the same way with the same costs. If the live trades don't beat it, the entry "
+                                          "rules aren't helping. With fewer than about 100 completed trades the difference is mostly luck.",
+             last_col=18, chars_per_line=190)
 
-    def mock_sheet(mock, chosen, intro, time_label):
-        note_row(mock, 1, intro + fees_note, last_col=18, chars_per_line=190, fill=NEUTRAL)
-        header(mock, 2, ["Date", time_label, "Rank", "Company", "Ticker", "Direction", "Setup", "Entry", "Stop", "Target",
-                           "Result", "Exit time", "Amount traded (£)", "Gross profit / loss (£)", "Dealing costs (£)",
-                           "Stamp duty (£)", "Net after all fees (£)", "Realised running net (£)"])
-        mock.row_dimensions[2].height = 45
-        top2 = chosen
-        if not top2.empty:
-            joined = top2.merge(outcomes[outcomes["horizon"] == main_h], on="key", how="left", suffixes=("", "_o"))
-            joined = add_costs(joined.assign(fill_risk_pct=joined["fill_risk_pct"]), args.cost_pct, args.stamp_duty_pct)
-            joined = realised_order(joined)
-            mock_cash = cash_flows(joined)
-            running = 0.0
-            for number, (idx, r) in enumerate(joined.iterrows(), 3):
-                status = r["status"] if isinstance(r["status"], str) else "pending"
-                shown_time = str(r["run_time"])[11:16] if time_label == "Signal time" else r["as_of"]
-                head = [r["day"], shown_time, int(r["rank"]), r["company"], r["ticker"], r["direction"], r["setup"]]
-                if status == "done":
-                    position = args.position_gbp
-                    gross, dealing, stamp, net = (float(mock_cash.loc[idx, column]) for column in
-                                                  ("gross_gbp", "dealing_gbp", "stamp_gbp", "net_gbp"))
-                    running += net
-                    label = {"target": "Target hit", "stop": "Stopped out", "timeout": "Closed at end of hold"}[r["outcome"]]
-                    put(mock, number, head + [round(r["fill"], 2), round(r["stop"], 2), round(r["target"], 2), label,
-                                              str(r["exit_time"])[:16].replace("T", " "), round(position, 0), round(gross, 2),
-                                              round(-dealing, 2), (round(-stamp, 2) if stamp else 0), round(net, 2), round(running, 2)],
-                        fill=GOOD if net > 0 else BAD)
-                else:
-                    label = {"skipped": ("Skipped (no trade within 30 min)" if r["outcome"] == "no_candle"
-                                         else "Skipped (price already past stop or target)"),
-                             "nodata": "No data"}.get(status, "Not resolved yet")
-                    put(mock, number, head + [(round(r["fill"], 2) if pd.notna(r["fill"]) else None),
-                                              round(r["stop"], 2), round(r["target"], 2), label], fill=NEUTRAL)
-        widths(mock, [11, 10, 6, 28, 9, 10, 12, 9, 9, 9, 40, 16, 14, 14, 13, 12, 14, 13])
-        mock.freeze_panes = "A3"
-
-    mock_sheet(live_sheet, picks.get(LIVE, pd.DataFrame()),
-               "Live mock trader: enters ideas as they trigger during the day, one new trade per scan, up to 5 a day (3 a day before 23 Oct 2026), one per share, FTSE 100 shares only from 23 Oct 2026; only ideas that pass the entry rules, including the check that the target would pay more than the stop could cost after costs. "
-               "Each entry was saved the moment the scan ran (see scan_data/live_mock_trades.csv); signal time = when that scan finished. "
-               "It is filled at the open of the next 15-minute candle after the signal. ", "Signal time")
+    # ---------------- Trade list ----------------
+    header(live_sheet, TRADES_HEADER_ROW, TRADE_HEADERS)
+    live_sheet.row_dimensions[TRADES_HEADER_ROW].height = 45
+    if not chosen.empty:
+        joined = chosen.merge(at_h, on="key", how="left", suffixes=("", "_o"))
+        joined = realised_order(add_costs(joined, args.cost_pct, args.stamp_duty_pct))
+        flows = cash_flows(joined)
+        running = 0.0
+        for number, (idx, r) in enumerate(joined.iterrows(), TRADES_HEADER_ROW + 1):
+            status = r["status"] if isinstance(r["status"], str) else "pending"
+            head = [r["day"], str(r["run_time"])[11:16], int(r["rank"]), r["company"], r["ticker"], r["direction"], r["setup"]]
+            if status == "done":
+                gross, dealing, stamp, net = (float(flows.loc[idx, c]) for c in ("gross_gbp", "dealing_gbp", "stamp_gbp", "net_gbp"))
+                running += net
+                label = {"target": "Target hit", "stop": "Stopped out", "timeout": "Closed at end of day"}[r["outcome"]]
+                put(live_sheet, number, head + [round(r["fill"], 2), round(r["stop"], 2), round(r["target"], 2), label,
+                                                str(r["exit_time"])[:16].replace("T", " "), round(args.position_gbp, 0), round(gross, 2),
+                                                round(-dealing, 2), (round(-stamp, 2) if stamp else 0), round(net, 2), round(running, 2)],
+                    fill=GOOD if net > 0 else BAD)
+            else:
+                label = {"skipped": ("Skipped (no trade within 30 min)" if r["outcome"] == "no_candle"
+                                     else "Skipped (price already past stop or target)"),
+                         "nodata": "No data"}.get(status, "Not resolved yet")
+                put(live_sheet, number, head + [(round(r["fill"], 2) if pd.notna(r["fill"]) else None),
+                                                round(r["stop"], 2), round(r["target"], 2), label], fill=NEUTRAL)
+    widths(live_sheet, [14, 11, 12, 28, 14, 14, 12, 12, 12, 10, 40, 16, 14, 14, 13, 12, 14, 13])
+    live_sheet.freeze_panes = f"A{TRADES_HEADER_ROW + 1}"
 
     # ---------------- Daily realised balance ----------------
-    header(daily, 1, ["Date"] + [f"{n} (cumulative £)" for n in daily_names])
+    header(daily, 1, ["Date", f"{LIVE} (cumulative £)"])
     daily.row_dimensions[1].height = 45
-    curves = {}
-    for name in daily_names:
-        trades = trades_for(picks[name], main_h) if not picks[name].empty else pd.DataFrame()
-        curves[name] = (cash_flows(trades)["net_gbp"].groupby(trades["realised_day"]).sum()
-                        if not trades.empty else pd.Series(dtype=float))
-    all_days = sorted(set().union(*[set(c.index) for c in curves.values()])) if curves else []
-    cumulative = {name: curves[name].reindex(all_days, fill_value=0.0).cumsum() for name in daily_names}
-    for number, day in enumerate(all_days, 2):
-        put(daily, number, [day] + [round(float(cumulative[n][day]), 2) for n in daily_names])
-    widths(daily, [12, 22, 22, 26, 26])
+    curve = cash["net_gbp"].groupby(trades["realised_day"]).sum() if done else pd.Series(dtype=float)
+    all_days = sorted(curve.index)
+    for number, (day, value) in enumerate(curve.reindex(all_days).cumsum().items(), 2):
+        put(daily, number, [day, round(float(value), 2)])
+    widths(daily, [12, 26])
     if len(all_days) >= 2:
         chart = LineChart()
-        chart.title = f"Realised paper balance (£), hold up to {main_h} day(s), after all fees"
+        chart.title = "Live mock trades: running balance after all fees (£)"
         chart.y_axis.title, chart.x_axis.title = "Cumulative £", "Date"
-        chart.add_data(Reference(daily, min_col=2, max_col=1 + len(daily_names), min_row=1, max_row=len(all_days) + 1), titles_from_data=True)
+        chart.add_data(Reference(daily, min_col=2, max_col=2, min_row=1, max_row=len(all_days) + 1), titles_from_data=True)
         chart.set_categories(Reference(daily, min_col=1, min_row=2, max_row=len(all_days) + 1))
-        for series, colour in zip(chart.series, ("2F6DB5", "C0392B", "2E9E5B", "8E44AD")):
+        for series in chart.series:
             series.smooth = False                      # straight lines: realised balance changes only on exits
-            series.graphicalProperties.line.solidFill = colour
+            series.graphicalProperties.line.solidFill = "2F6DB5"
             series.graphicalProperties.line.width = 22000
-        chart.x_axis.tickLblPos = "low"                # day labels at the bottom, not across the zero line
+        chart.x_axis.tickLblPos = "low"
         chart.x_axis.delete = False                    # newer openpyxl hides axes in Excel unless told otherwise
         chart.y_axis.delete = False
+        chart.legend = None
         chart.height, chart.width = 9, 22
-        daily.add_chart(chart, "G2")
-    put(daily, len(all_days) + 4, [f"Each trade is £{args.position_gbp:.0f} of shares, after dealing costs and stamp duty. Change with --position-gbp."])
+        daily.add_chart(chart, "D2")
+    put(daily, len(all_days) + 4, [f"Each trade is £{args.position_gbp:.0f}, after dealing costs and stamp duty."])
 
-    # ---------------- All outcomes ----------------
-    heads = ["Date", "Scan (as of)", "Company", "Ticker", "Type", "Index", "Setup", "Direction", "Score", "Touches", "Stop", "Target"]
-    for horizon in horizons:
-        heads += [f"Result, {horizon}d", f"Profit / loss per £{args.position_gbp:.0f}, {horizon}d (before costs, £)"]
-    header(allout, 1, heads)
-    allout.row_dimensions[1].height = 45
-    by_h = {h: outcomes[outcomes["horizon"] == h].set_index("key") for h in horizons}
-    ordered_pool = pool.sort_values(["day", "as_of", "score"], ascending=[False, False, False]) if not pool.empty else pool
-    for number, (_, r) in enumerate(ordered_pool.iterrows(), 2):
-        values = [r["day"], r["as_of"], r["company"], r["ticker"], "Trust" if kinds.get(r["ticker"]) == "trust" else "Company",
-                  r["index"], r["setup"], r["direction"], r["score"], int(r["touches"]), r["stop"], r["target"]]
-        for horizon in horizons:
-            rows_h = by_h[horizon]
-            if r["key"] in rows_h.index:
-                o = rows_h.loc[r["key"]]
-                result = o["outcome"] if o["status"] == "done" else ("skipped" if o["status"] == "skipped" else "no data")
-                values += [result, round(o["r_gross"] * args.position_gbp * o["fill_risk_pct"] / 100, 2) if o["status"] == "done" else None]
-            else:
-                values += ["pending", None]
-        put(allout, number, values)
-    widths(allout, [11, 10, 30, 9, 9, 10, 9, 9, 7, 8, 9, 9] + [11, 12] * len(horizons))
-    allout.freeze_panes = "A2"
-    money_format = '"£"#,##0.00;[Red]-"£"#,##0.00;"£"0.00'
-    for row_idx, cols in ((6,[1]),(9,[1,2,3,4])):
-        for col in cols:
-            summary.cell(row_idx,col).number_format=money_format
-    for col in range(14, 14 + 2 * len(horizons), 2):
-        for row_idx in range(2, allout.max_row + 1):
-            if isinstance(allout.cell(row_idx, col).value, (float, int)):
-                allout.cell(row_idx, col).number_format = money_format
-    for ws in (live_sheet,daily):
-        start_row=2 if ws is daily else 3
-        currency_cols=range(2, 2 + len(daily_names)) if ws is daily else range(13,19)
-        for row_idx in range(start_row,ws.max_row+1):
-            for col in currency_cols:
-                if isinstance(ws.cell(row_idx,col).value,(float,int)):
-                    ws.cell(row_idx,col).number_format=money_format
-    for ws in (comparison,breakdown):
-        for row_idx in range(1,ws.max_row+1):
-            for col in range(1,ws.max_column+1):
-                cell=ws.cell(row_idx,col)
-                if not isinstance(cell.value,(float,int)):
-                    continue
-                if ws is breakdown:
-                    block_header=next((r for r in range(row_idx-1,0,-1) if ws.cell(r,1).value in ("Group","Scope")),None)
-                    label=str(ws.cell(block_header,col).value or "") if block_header else ""
-                    if label in ("Completed","Target","Stop","Timeout"):
-                        cell.number_format="0"
-                    elif "(£)" in label:
-                        cell.number_format=money_format
-                elif ws is comparison:
-                    # Locate the current block header above this data row.
-                    previous=next((r for r in range(row_idx-1,0,-1) if ws.cell(r,1).value=="Scenario"),None)
-                    if previous:
-                        label=str(ws.cell(previous,col).value or "")
-                        if "(£)" in label:cell.number_format=money_format
+    # ---------------- Money formats ----------------
+    for col in (1, 7, 8, 9):
+        live_sheet.cell(TOTALS_ROW, col).number_format = MONEY_FORMAT
+    for col in (3, 5, 6):
+        live_sheet.cell(COMPARE_ROW, col).number_format = MONEY_FORMAT
+    for row_idx in range(TRADES_HEADER_ROW + 1, live_sheet.max_row + 1):
+        for col in range(13, 19):
+            if isinstance(live_sheet.cell(row_idx, col).value, (float, int)):
+                live_sheet.cell(row_idx, col).number_format = MONEY_FORMAT
+    for row_idx in range(2, daily.max_row + 1):
+        if isinstance(daily.cell(row_idx, 2).value, (float, int)):
+            daily.cell(row_idx, 2).number_format = MONEY_FORMAT
     return wb
 
 
@@ -806,8 +618,7 @@ def main() -> None:
     parser.add_argument("--universe", default=str(sc.UNIVERSE_PATH), help="Constituent CSV (for the trust/company label)")
     parser.add_argument("--interval", default="15m", help="Candle size the scanner used (default: 15m)")
     parser.add_argument("--period", default="60d", help="How much history to download (Yahoo max for 15m is 60d)")
-    parser.add_argument("--horizons", default="1,2,5", help="Maximum holding periods to test, in trading days (default: 1,2,5)")
-    parser.add_argument("--horizon", type=int, default=1, help="Holding period used for the detail sheets (default: 1 = same day)")
+    parser.add_argument("--horizon", type=int, default=1, help="Holding period in trading days (default: 1 = same day)")
     parser.add_argument("--last-entry", default="15:30", help="Ignore setups from scans after this time (default: 15:30)")
     parser.add_argument("--cost-pct", type=float, default=0.10, help="Assumed round-trip cost (spread + slippage) as %% of price (default: 0.10)")
     parser.add_argument("--stamp-duty-pct", type=float, default=0.5, help="Stamp duty %% on long entries, for the 'if you buy actual shares' column; 0 turns it off (default: 0.5)")
@@ -815,10 +626,7 @@ def main() -> None:
     parser.add_argument("--delay", type=float, default=0.3, help="Seconds between downloads (default: 0.3)")
     args = parser.parse_args()
 
-    horizons = [int(h) for h in args.horizons.split(",")]
-    if args.horizon not in horizons:
-        horizons.append(args.horizon)
-        args.horizons = ",".join(str(h) for h in sorted(horizons))
+    horizons = [args.horizon]
     data_dir = Path(args.data_dir)
     candidates = load_candidates(data_dir, args.last_entry)
     if candidates.empty:

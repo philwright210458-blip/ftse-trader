@@ -86,7 +86,7 @@ class MockProgressTests(unittest.TestCase):
         self.assertEqual(mock_progress(self.trade(), self.candles([(100, 100, 100, 100)]))["status"], "Waiting for entry candle")
         self.assertEqual(mock_progress(self.trade(), None)["status"], "Price check unavailable")
 
-    def test_scan_workbook_has_mock_sheet_second(self):
+    def test_scan_workbook_has_only_the_mock_sheet(self):
         import ftse_trade_scanner as sc
         info = sc.RunInfo(day="2026-10-21", as_of="10:30", data_time=pd.Timestamp("2026-10-21 10:15", tz=sc.UK_TZ),
                           run_time="2026-10-21 10:31:00", mode="watch", scanned=15, failed=0)
@@ -96,9 +96,11 @@ class MockProgressTests(unittest.TestCase):
                             "costs": 0.6, "net": 2.3}}
         book = sc.build_workbook(info, [], [], [], pd.DataFrame(columns=sc.SETUP_COLUMNS),
                                  pd.DataFrame(columns=sc.RUN_COLUMNS), {}, [row])
-        self.assertEqual(book.sheetnames[:2], ["Top Trades", "Today's Mock Trades"])
+        self.assertEqual(book.sheetnames, ["Today's Mock Trades"])
         ws = book["Today's Mock Trades"]
-        self.assertEqual([ws.cell(3, c).value for c in (3, 5, 6, 10, 15)], ["Alpha plc", "Reclaim", "Buy", "Target hit", 2.3])
+        self.assertIn("watch scan, data to 10:30 UK", ws.cell(1, 1).value)
+        self.assertIn("Mock trades made today", ws.cell(2, 1).value)
+        self.assertEqual([ws.cell(4, c).value for c in (3, 5, 6, 10, 15)], ["Alpha plc", "Reclaim", "Buy", "Target hit", 2.3])
 
 
 if __name__ == "__main__":

@@ -744,81 +744,18 @@ def _write_mock_sheet(ws, rows: list[dict], info: "RunInfo") -> None:
                   "in ftse_outcomes.xlsx (Live Mock Trades sheet). Costs per £100: 10p dealing, plus 50p stamp duty on buys.")
 
 
-def _write_today_sheet(ws, setups: pd.DataFrame, runs: pd.DataFrame, day: str, kinds: dict[str, str]) -> None:
-    labels = sorted(set(runs.loc[runs["day"] == day, "as_of"]))
-    widths = {1: 30, 2: 10, 3: 10, 4: 11, 5: 9}
-    _style_header(ws, ["Company", "Ticker", "Type", "Direction", "Seen"] + labels, widths)
-    for number in range(6, 6 + len(labels)):
-        ws.column_dimensions[get_column_letter(number)].width = 9
-    ws.freeze_panes = "F3"
-    flagged = setups[(setups["day"] == day) & (~setups["conflict"])]
-    if flagged.empty:
-        ws.append(["No non-conflicting setups recorded yet today"])
-    else:
-        table = flagged.pivot_table(index=["company", "ticker", "direction"], columns="as_of",
-                                    values="score", aggfunc="max").reindex(columns=labels)
-        table["_count"] = table[labels].notna().sum(axis=1)
-        table["_latest"] = table[labels].ffill(axis=1).iloc[:, -1]
-        table = table.sort_values(["_count", "_latest"], ascending=False)
-        for (company, ticker, direction), row in table.iterrows():
-            scores = [None if pd.isna(row[label]) else float(row[label]) for label in labels]
-            first = next(index for index, score in enumerate(scores) if score is not None)
-            seen = sum(score is not None for score in scores)
-            ws.append([company, ticker, _kind_label(kinds.get(ticker)), direction, f"{seen}/{len(labels) - first}"] + scores)
-            _fill_row(ws, _direction_fill(direction))
-    _add_note(ws, "Quality score in each scan. Columns are the time each scan's latest completed candle closed (UK). "
-                  "Blank = not flagged in that scan. Conflicting setups are left out.")
-
-
-def _write_history_sheet(ws, setups: pd.DataFrame, kinds: dict[str, str], days: int = 3) -> None:
-    headers = ["As of", "Day", "Mode", "Company", "Ticker", "Type", "Direction", "Setup", "Quality Score",
-               "Conflict", "Entry", "Stop", "Target", "Risk %", "Zone Low", "Zone High", "Touches"]
-    _style_header(ws, headers)
-    if setups.empty:
-        ws.append(["No history yet"])
-    else:
-        recent = setups[setups["day"].isin(sorted(set(setups["day"]))[-days:])]
-        recent = recent.sort_values(["day", "as_of", "score"], ascending=[False, False, False])
-        for _, row in recent.iterrows():
-            ws.append([row["as_of"], row["day"], row["mode"], row["company"], row["ticker"], _kind_label(kinds.get(row["ticker"])),
-                       row["direction"], row["setup"], row["score"], "Yes" if row["conflict"] else "No", row["entry"], row["stop"],
-                       row["target"], row["risk_pct"], row["zone_low"], row["zone_high"], int(row["touches"])])
-            _fill_row(ws, _direction_fill(row["direction"], row["conflict"]))
-    _add_note(ws, f"Every flagged setup from the last {days} scanning day(s), newest first.")
-
-
 def build_workbook(info: RunInfo, all_setups: list[TradeSetup], selected: list[TradeSetup],
                    ranked: list[TradeSetup], setups_history: pd.DataFrame, runs: pd.DataFrame,
                    kinds: dict[str, str] | None = None, mock_rows: list[dict] | None = None) -> Workbook:
-    kinds = kinds or {}
+    """One sheet: today's live mock trades. (Top Trades, Today, All Setups and History were removed on 23 Oct 2026;
+    every flagged setup is still saved in scan_data/setups.csv.)"""
     workbook = Workbook()
-    top = workbook.active
-    top.title = "Top Trades"
-    mocks, today, audit, history = (workbook.create_sheet(name) for name in
-                                    ("Today's Mock Trades", "Today", "All Setups", "History"))
+    mocks = workbook.active
+    mocks.title = "Today's Mock Trades"
     _write_mock_sheet(mocks, mock_rows or [], info)
-
-    seen = persistence(setups_history, runs, info.day)
-    _style_header(top, TOP_HEADERS)
-    if ranked:
-        for rank, setup in enumerate(ranked, 1):
-            seen_text, first = seen.get((setup.ticker, setup.direction), ("1/1", info.as_of))
-            _append_setup(top, setup, rank, (seen_text, first))
-    else:
-        top.append(["", "No non-conflicting qualifying setups found"] + [""] * (len(TOP_HEADERS) - 2))
-    _add_note(top, f"{report_timestamp()} | {info.mode} scan, data to {info.as_of} UK | {len(all_setups)} raw setup(s) | "
-                   f"{len(selected)} after de-duplication | {sum(s.stale for s in all_setups)} stale excluded | {len(ranked)} shown | prices mostly in pence"
-                   + (f" | {info.data_check}" if info.data_check else ""))
-
-    _write_today_sheet(today, setups_history, runs, info.day, kinds)
-
-    _style_header(audit, HEADERS)
-    for setup in sorted(all_setups, key=lambda item: (item.company, -item.quality_score)):
-        _append_setup(audit, setup)
-    _add_note(audit, f"Every raw setup from this scan ({info.mode}, data to {info.as_of} UK), before de-duplication. "
-                     f"Grey rows are stale (their last trade is too far behind the freshest candle).")
-
-    _write_history_sheet(history, setups_history, kinds)
+    _add_note(mocks, f"{report_timestamp()} | {info.mode} scan, data to {info.as_of} UK | {len(ranked)} idea(s) found this scan"
+                     + (f" | {info.data_check}" if info.data_check else ""))
+    mocks.freeze_panes = "A4"                          # two note rows, then the column headings
     return workbook
 
 

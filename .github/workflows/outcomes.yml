@@ -37,6 +37,12 @@ jobs:
       - name: Run outcome tracker
         run: python -u ftse_outcomes.py
 
+      # Re-check today's mock trades to the 16:30 close, so the scan workbook's
+      # Today's Mock Trades sheet shows how open trades ended (the last scan is before the close).
+      - name: Update today's mock trades to the close
+        continue-on-error: true
+        run: python -u ftse_trade_scanner.py --refresh-mock
+
       # Claude's monthly momentum model, paper-traded forward (ftse_momentum_live.py).
       # Decides after the close on the last trading day of each month and fills at the
       # next morning's open; catches up if a run is missed. A failure here never stops
@@ -56,6 +62,7 @@ jobs:
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
           git add --all scan_data
           git add --all -- ftse_outcomes.xlsx 2>/dev/null || true
+          git add --all -- ftse_scan_latest.xlsx 2>/dev/null || true
           git add --all -- ftse_momentum_live.xlsx 2>/dev/null || true
           git add --all -- ftse_structure_live.xlsx 2>/dev/null || true
           if git diff --cached --quiet; then echo "Nothing new to save."; exit 0; fi

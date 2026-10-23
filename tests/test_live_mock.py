@@ -71,7 +71,7 @@ class MockProgressTests(unittest.TestCase):
         from ftse_live_mock import mock_progress
         data = self.candles([(100, 100.2, 99.8, 100), (100.0, 103.5, 98.5, 101)])
         p = mock_progress(self.trade(), data)
-        self.assertEqual((p["status"], p["price"], p["time"]), ("Stopped out", 99.0, "10:15"))
+        self.assertEqual((p["status"], p["price"], p["time"]), ("Stopped out", 99.0, "10:30"))
 
     def test_sell_target_and_gap(self):
         from ftse_live_mock import mock_progress
@@ -101,6 +101,40 @@ class MockProgressTests(unittest.TestCase):
         self.assertIn("watch scan, data to 10:30 UK", ws.cell(1, 1).value)
         self.assertIn("Mock trades made today", ws.cell(2, 1).value)
         self.assertEqual([ws.cell(4, c).value for c in (3, 5, 6, 10, 15)], ["Alpha plc", "Reclaim", "Buy", "Target hit", 2.3])
+
+    def test_open_trade_closes_at_end_of_day(self):
+        from ftse_live_mock import mock_progress
+        index = pd.date_range("2026-10-21 16:00", periods=2, freq="15min", tz="Europe/London")
+        data = pd.DataFrame([(100, 100.2, 99.8, 100), (100.1, 100.6, 99.9, 100.5)],
+                            columns=["open", "high", "low", "close"], index=index)
+        row = dict(self.trade(), signal_time="2026-10-21 15:59:00")
+        p = mock_progress(row, data)
+        self.assertEqual((p["status"], p["time"], p["price"]), ("Closed at end of day", "16:30", 100.5))
+        early = mock_progress(row, data.iloc[:1])
+        self.assertEqual((early["status"], early["time"]), ("Open", "16:15"))
+
+    def test_refresh_after_close_rewrites_mock_sheet(self):
+        import tempfile
+        from unittest.mock import patch
+        import ftse_trade_scanner as sc
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            pd.DataFrame([{**{c: "" for c in sc.RUN_COLUMNS}, "day": "2026-10-21"}])[sc.RUN_COLUMNS].to_csv(folder / "runs.csv", index=False)
+            rows = [{"trade_no": 1, "signal_time": "2026-10-21 10:03:48", "company": "Alpha plc", "ticker": "A.L",
+                     "setup": "Range", "direction": "Short", "stop": 101.0, "target": 97.0,
+                     "progress": {"fill": 100.0, "status": "Closed at end of day", "time": "16:30", "price": 99.0,
+                                  "gross": 1.0, "costs": 0.1, "net": 0.9}}]
+            now = pd.Timestamp("2026-10-21 17:05", tz=sc.UK_TZ).to_pydatetime()
+            with patch.object(sc, "todays_mock_trades", return_value=rows):
+                self.assertEqual(sc.refresh_mock_workbook(folder, folder / "s.xlsx", "15m", now), 0)
+            from openpyxl import load_workbook
+            ws = load_workbook(folder / "s.xlsx")["Today's Mock Trades"]
+            self.assertIn("after the market close", ws.cell(1, 1).value)
+            self.assertEqual(ws.cell(4, 10).value, "Closed at end of day")
+            other = pd.Timestamp("2026-10-22 17:05", tz=sc.UK_TZ).to_pydatetime()
+            (folder / "s.xlsx").unlink()
+            self.assertEqual(sc.refresh_mock_workbook(folder, folder / "s.xlsx", "15m", other), 0)
+            self.assertFalse((folder / "s.xlsx").exists())
 
 
 if __name__ == "__main__":

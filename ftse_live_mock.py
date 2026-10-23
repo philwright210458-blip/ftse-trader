@@ -92,11 +92,16 @@ def record_live_mock(data_dir: Path, info, candidates, max_per_day: int = DEFAUL
 DEALING_GBP, STAMP_GBP = 0.10, 0.50       # per £100: dealing on every trade, stamp duty on buys
 
 
-def mock_progress(row: dict, data: pd.DataFrame | None) -> dict:
-    """Provisional state of one live mock trade from completed candles: open, stopped out or target hit.
+MARKET_CLOSE = "16:30"                      # UK; same-day mock trades are closed at the last price before this
+
+
+def mock_progress(row: dict, data: pd.DataFrame | None, minutes: int = 15) -> dict:
+    """Provisional state of one live mock trade from completed candles: open, stopped out, target hit, or
+    closed at the end of the day once the day's last candle (ending 16:30) is in.
 
     Same rules as the outcome tracker: filled at the open of the first candle that starts after the
-    signal, stop counted first if stop and target fall in the same candle. The 17:05 outcome run is final."""
+    signal, stop counted first if stop and target fall in the same candle. "At" is the time the candle
+    ended (a 15:30-15:45 candle shows 15:45). The 17:05 outcome run is final."""
     result = {"fill": None, "status": "Waiting for entry candle", "time": "", "price": None,
               "gross": None, "costs": None, "net": None}
     if data is None or data.empty:
@@ -124,8 +129,11 @@ def mock_progress(row: dict, data: pd.DataFrame | None) -> dict:
         if hit_target:
             status, price, when = "Target hit", (max(o, target) if long else min(o, target)), stamp
             break
+    ended = when + pd.Timedelta(minutes=minutes)
+    if status == "Open" and ended.strftime("%H:%M") >= MARKET_CLOSE:
+        status = "Closed at end of day"
     gross = ((price - fill) if long else (fill - price)) / fill * 100
     costs = DEALING_GBP + (STAMP_GBP if long else 0.0)
-    result.update(status=status, time=when.strftime("%H:%M"), price=round(price, 2), gross=round(gross, 2),
+    result.update(status=status, time=ended.strftime("%H:%M"), price=round(price, 2), gross=round(gross, 2),
                   costs=costs, net=round(gross - costs, 2))
     return result

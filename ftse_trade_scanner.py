@@ -753,8 +753,11 @@ def build_workbook(info: RunInfo, all_setups: list[TradeSetup], selected: list[T
     mocks = workbook.active
     mocks.title = "Today's Mock Trades"
     _write_mock_sheet(mocks, mock_rows or [], info)
-    _add_note(mocks, f"{report_timestamp()} | {info.mode} scan, data to {info.as_of} UK | {len(ranked)} idea(s) found this scan"
-                     + (f" | {info.data_check}" if info.data_check else ""))
+    if info.mode == "close":
+        _add_note(mocks, f"{report_timestamp()} | final check after the market close (16:30): open trades are closed at the last price")
+    else:
+        _add_note(mocks, f"{report_timestamp()} | {info.mode} scan, data to {info.as_of} UK | {len(ranked)} idea(s) found this scan"
+                         + (f" | {info.data_check}" if info.data_check else ""))
     mocks.freeze_panes = "A4"                          # two note rows, then the column headings
     return workbook
 
@@ -769,8 +772,24 @@ def todays_mock_trades(data_dir: Path, info: "RunInfo", interval: str) -> list[d
             data = drop_untraded_bars(completed_candles(fetch_data(row["ticker"], interval, "5d"), interval))
         except Exception:
             data = None
-        row["progress"] = mock_progress(row, data)
+        row["progress"] = mock_progress(row, data, interval_minutes(interval) or 15)
     return rows
+
+
+def refresh_mock_workbook(data_dir: Path, workbook_path: Path, interval: str, now: datetime | None = None) -> int:
+    """Rewrite the Today's Mock Trades sheet after the close, so trades still open at the last scan show how
+    the day ended. Uses today's UK date; does nothing on a day with no scans."""
+    now = now or datetime.now(UK_TZ)
+    day = now.strftime("%Y-%m-%d")
+    runs = _read_table(Path(data_dir) / "runs.csv", RUN_COLUMNS)
+    if runs.empty or day not in set(runs["day"]):
+        print(f"No scans recorded on {day}; scan workbook left as it is.")
+        return 0
+    info = RunInfo(pd.Timestamp(f"{day} 16:15", tz=UK_TZ), "16:30", day, now.strftime("%Y-%m-%d %H:%M:%S"), "close", 0, 0)
+    rows = todays_mock_trades(Path(data_dir), info, interval)
+    save_workbook(build_workbook(info, [], [], [], pd.DataFrame(), runs, None, rows), workbook_path)
+    print(f"Today's Mock Trades updated to the close: {len(rows)} trade(s).")
+    return 0
 
 
 def save_workbook(workbook: Workbook, path: Path) -> Path:
@@ -861,10 +880,15 @@ def main() -> None:
                         help="Download shares one at a time instead of in batches (slower; for troubleshooting)")
     parser.add_argument("--no-entry-rules", action="store_true",
                         help="Turn off the entry rules added on 21 Oct 2026 (seen-both-ways, rejection candle, reclaim distance)")
+    parser.add_argument("--refresh-mock", action="store_true",
+                        help="After the close: re-check today's mock trades to the end of the day and rewrite the "
+                             "workbook (no scan, nothing recorded). Run by the 17:05 outcomes workflow")
     parser.add_argument("--top", type=int, default=10, help="Show top N non-conflicting setups by quality score; 0 means no cap (default: 10)")
     args = parser.parse_args()
 
     data_dir, workbook_path = Path(args.data_dir), Path(args.out)
+    if args.refresh_mock:
+        sys.exit(refresh_mock_workbook(data_dir, workbook_path, args.interval))
     runs = _read_table(data_dir / "runs.csv", RUN_COLUMNS)
     setups_history = _read_table(data_dir / "setups.csv", SETUP_COLUMNS)
     universe = load_universe(Path(args.universe))

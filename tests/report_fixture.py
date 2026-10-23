@@ -68,11 +68,7 @@ def fixture():
             )
     pool = pd.DataFrame(rows)
     main = pool.iloc[:7].copy()
-    picks = {
-        "Top 1 per day": main[main["rank"] == 1].copy(),
-        "Top 2 per day": main,
-        "Top 2 per day, persistent": main.iloc[:2].copy(),
-    }
+    picks = {out.LIVE: main}
     args = argparse.Namespace(
         horizons="1,2,5", horizon=1, cost_pct=0.1, stamp_duty_pct=0.5, pick_time="10:30", position_gbp=100.0
     )

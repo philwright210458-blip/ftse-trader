@@ -211,7 +211,7 @@ class DecisionsAndStatistics(unittest.TestCase):
         outcomes = pd.DataFrame(
             [outcome(exit_time="2026-10-16T15:00:00+01:00"), outcome("missing", "missing_coverage", status="nodata")]
         )
-        picks = {name: frame.assign(rank=[1, 2]) for name in out.PICK_SCENARIOS}
+        picks = {out.LIVE: frame.assign(rank=[1, 2])}
         args = argparse.Namespace(
             horizons="1", horizon=1, cost_pct=0.0, stamp_duty_pct=0.0, pick_time="10:30", position_gbp=100.0
         )

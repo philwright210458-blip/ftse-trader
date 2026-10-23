@@ -20,7 +20,7 @@ class ReportTests(unittest.TestCase):
     def test_tab_order_and_explicit_fixture_label(self):
         self.assertEqual(
             self.book.sheetnames,
-            ["Summary", "Strategy Comparison", "Breakdowns", "Mock Trades", "Live Mock Trades", "Daily", "All Outcomes"],
+            ["Summary", "Strategy Comparison", "Breakdowns", "Live Mock Trades", "Daily", "All Outcomes"],
         )
         self.assertIn("SYNTHETIC FIXTURE", self.book["Summary"].cell(2, 1).value)
 
@@ -40,11 +40,11 @@ class ReportTests(unittest.TestCase):
         self.assertAlmostEqual(net, 0.8)
         self.assertAlmostEqual(gross + dealing + stamp, net)
         self.assertEqual(ws.cell(6, 1).value, net)
-        mock = self.book["Mock Trades"]
+        mock = self.book["Live Mock Trades"]
         totals = [sum(float(mock.cell(r, c).value or 0) for r in range(3, mock.max_row + 1)) for c in (14, 15, 16, 17)]
         for expected, actual in zip((gross, dealing, stamp, net), totals):
             self.assertAlmostEqual(expected, actual)
-        self.assertAlmostEqual(self.book["Daily"].cell(3, 3).value, net)
+        self.assertAlmostEqual(self.book["Daily"].cell(3, 2).value, net)
 
     def test_alternative_scenarios_reconcile_and_same_cost_basis(self):
         ws = self.book["Strategy Comparison"]
@@ -55,7 +55,7 @@ class ReportTests(unittest.TestCase):
         ]
         self.assertEqual(len(headers), 3)
         for block, header in enumerate(headers):
-            for row in range(header + 1, header + 5):
+            for row in range(header + 1, header + 3):
                 selected, completed, pending, missing, skipped = [ws.cell(row, c).value for c in range(2, 7)]
                 self.assertEqual(selected, completed + skipped + pending + missing)
                 if completed:
@@ -65,7 +65,7 @@ class ReportTests(unittest.TestCase):
                     self.assertEqual(ws.cell(row, 7).value, "Awaiting results")
                     self.assertEqual(ws.cell(row, 10).value, "Awaiting results")
             if block:
-                self.assertEqual(ws.cell(header + 2, 4).value, 7)
+                self.assertEqual(ws.cell(header + 1, 4).value, 7)
         text = " ".join(str(c.value or "") for row in ws for c in row)
         self.assertIn("a choosing rule is only useful if its average beats this one", text)
         self.assertNotIn("Break-even target-hit rate", text)
@@ -85,8 +85,8 @@ class ReportTests(unittest.TestCase):
             self.assertIn("£", summary.cell(row, col).number_format)
             self.assertIn("0.00", summary.cell(row, col).number_format)
         self.assertIn("Evidence: 4 completed trades across 2 market day", summary.cell(4, 1).value)
-        self.assertIn("£", self.book["Mock Trades"].cell(3, 17).number_format)
-        self.assertIn("£", self.book["Daily"].cell(2, 3).number_format)
+        self.assertIn("£", self.book["Live Mock Trades"].cell(3, 17).number_format)
+        self.assertIn("£", self.book["Daily"].cell(2, 2).number_format)
         comparison = self.book["Strategy Comparison"]
         headers = [r for r in range(1, comparison.max_row + 1) if comparison.cell(r, 1).value == "Scenario"]
         self.assertIn("£", comparison.cell(headers[0] + 1, 9).number_format)
@@ -127,12 +127,12 @@ class ReportTests(unittest.TestCase):
         results = self.results.iloc[:3].copy()
         results["r_gross"] = 0.334
         results["fill_risk_pct"] = 1.0
-        picks = {name: frame.copy() for name in out.PICK_SCENARIOS}
+        picks = {out.LIVE: frame.copy()}
         book = out.build_report(self.args, frame, frame, picks, results, {}, "SYNTHETIC PENNY CHECK")
         self.assertEqual(book["Summary"].cell(6, 1).value, 0.99)
-        mock = book["Mock Trades"]
+        mock = book["Live Mock Trades"]
         self.assertAlmostEqual(sum(mock.cell(r, 17).value for r in range(3, 6)), 0.99)
-        self.assertEqual(book["Daily"].cell(3, 3).value, 0.99)
+        self.assertEqual(book["Daily"].cell(3, 2).value, 0.99)
 
     def test_pending_only_headline_is_not_zero_profit(self):
         self.args.horizon = 2
@@ -142,12 +142,18 @@ class ReportTests(unittest.TestCase):
 
     def test_zero_completed_and_empty_candidate_states(self):
         empty = pd.DataFrame(columns=self.pool.columns)
-        picks = {name: empty.copy() for name in out.PICK_SCENARIOS}
+        picks = {out.LIVE: empty.copy()}
         results = pd.DataFrame(columns=out.OUTCOME_COLUMNS)
         book = out.build_report(self.args, empty, empty, picks, results, {}, "SYNTHETIC EMPTY")
         self.assertEqual([book["Summary"].cell(6, c).value for c in range(1, 6)], [0, 0, 0, 0, 0])
         self.assertEqual([book["Summary"].cell(12, c).value for c in range(1, 6)], [0, 0, 0, 0, 0])
         self.assertIn("No completed", book["Breakdowns"].cell(4, 1).value)
+
+    def test_no_fixed_time_top2_mock_trader(self):
+        text = " ".join(str(c.value or "") for ws in self.book.worksheets for row in ws for c in row)
+        self.assertNotIn("Mock Trades", [n for n in self.book.sheetnames if n != "Live Mock Trades"])
+        self.assertNotIn("Top 2 per day", text)
+        self.assertNotIn("at or after 10:30", text)
 
 
 if __name__ == "__main__":

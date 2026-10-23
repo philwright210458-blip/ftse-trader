@@ -8,11 +8,15 @@ would following this model have made money?
 What it does
   1. Walks each logged setup forward through the candles that followed it:
      did price reach the target or the stop first, or neither?
-  2. Imagines a trader who takes the top 1 or 2 ideas each day and shows how
-     those paper trades performed over time (realised balance and drawdown).
-  3. Compares those picks with the average of EVERY idea the scanner flagged
-     (a random pick). If the top-ranked ideas are not better than that
-     average, the ranking is not adding value.
+  2. Scores the live mock trader's paper trades (taken at trigger points
+     during the day, saved in scan_data/live_mock_trades.csv) and shows how
+     they performed over time (realised balance and drawdown).
+  3. Compares those trades with the average of EVERY idea the scanner flagged
+     (a random pick). If the chosen trades are not better than that
+     average, the entry rules are not adding value.
+
+(The old fixed-time "top 2 ideas at 10:30" mock trader was removed on
+23 Oct 2026; build_picks is kept only for ftse_backtest.py.)
 
 Run it once a day after the close (Yahoo only keeps about 60 days of 15-minute
 candles, so corrected results are cached in scan_data/outcomes.v2.csv):
@@ -461,7 +465,7 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
     horizons = [int(h) for h in args.horizons.split(",")]
     main_h = args.horizon
     wb = Workbook()
-    summary, breakdown, mock, live_sheet, daily, allout = wb.active, *(wb.create_sheet(n) for n in ("Breakdowns", "Mock Trades", "Live Mock Trades", "Daily", "All Outcomes"))
+    summary, breakdown, live_sheet, daily, allout = wb.active, *(wb.create_sheet(n) for n in ("Breakdowns", "Live Mock Trades", "Daily", "All Outcomes"))
     summary.title = "Summary"
 
     def resolved(keys: pd.Series, horizon: int) -> pd.DataFrame:
@@ -477,9 +481,9 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
         joined = add_costs(joined, args.cost_pct, args.stamp_duty_pct)
         return realised_order(joined)
 
-    daily_names = PICK_SCENARIOS + ([LIVE] if LIVE in picks else [])
-    scenarios = {name: picks[name] for name in daily_names}
-    scenarios[POOL] = pool
+    live_picks = picks.get(LIVE, pd.DataFrame())
+    daily_names = [LIVE]
+    scenarios = {LIVE: live_picks, POOL: pool}
 
     # Main results use the actual per-trade cash flows, never average R * £100.
     def cash_flows(trades):
@@ -498,7 +502,7 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
         counts["pending"] = len(frame) - sum(counts.values())
         return counts
 
-    top2 = picks["Top 2 per day"]
+    top2 = live_picks
     main_trades = trades_for(top2, main_h) if not top2.empty else pd.DataFrame()
     cash = cash_flows(main_trades)
     counts = coverage(top2, main_h)
@@ -508,8 +512,8 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
     days = sorted(set(candidates["day"])) if not candidates.empty else []
     put(summary, 1, ["FTSE paper research: main results"], bold=True)
     note_row(summary, 2, f"Generated {generated}. Corrected simulation: {SIMULATION_VERSION}. Research only; no real orders.", last_col=8, chars_per_line=110)
-    note_row(summary, 3, f"Top 2 per day, held up to {main_h} trading day(s). £{args.position_gbp:.2f} position value per simulated trade. "
-                         f"Decision: first scan available at or after {args.pick_time}. These are recorded-history results, not a current trading shortlist.", last_col=8, chars_per_line=110)
+    note_row(summary, 3, f"Live mock trader: trades taken at trigger points during the day (up to 5 a day), held up to {main_h} trading day(s). "
+                         f"£{args.position_gbp:.2f} per simulated trade. These are recorded-history results, not a current trading shortlist.", last_col=8, chars_per_line=110)
     main_days = main_trades["day"].nunique() if not main_trades.empty else 0
     note_row(summary, 4, f"Evidence: {len(main_trades)} completed trades across {main_days} market day(s); pending and missing results are excluded. "
                          "This is a descriptive sample, not proof of an edge or a forecast.", last_col=8, chars_per_line=110)
@@ -529,9 +533,9 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
     outcomes_main = main_trades["outcome"] if not main_trades.empty else pd.Series(dtype=str)
     header(summary, 17, ["Price event", "Target", "Stop", "Timeout"])
     put(summary, 18, ["Completed trades", int((outcomes_main == "target").sum()), int((outcomes_main == "stop").sum()), int((outcomes_main == "timeout").sum())])
-    note_row(summary, 20, "Currency components are rounded per trade to pennies, then totalled. Net realised pounds reconcile with Mock Trades and the final Daily pounds balance. "
+    note_row(summary, 20, "Currency components are rounded per trade to pennies, then totalled. Net realised pounds reconcile with Live Mock Trades and the final Daily pounds balance. "
                           "Open positions are not valued here. Trade fills are synthetic, based on completed candle evidence; missing intervals remain unresolved.", last_col=8, chars_per_line=110)
-    note_row(summary, 22, "Use Strategy Comparison for alternative selections and holding periods. Alternatives are not additive portfolios. "
+    note_row(summary, 22, "Use Strategy Comparison to compare with every idea the scanner found, and other holding periods. "
                           "A short or profitable sample does not demonstrate an edge; same-day trades may be correlated.", last_col=8, chars_per_line=110)
     widths(summary, [23, 20, 20, 20, 19, 3, 3, 3])
     summary.freeze_panes = "A5"
@@ -539,21 +543,13 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
     # ---------------- Strategy comparison ----------------
     comparison = wb.create_sheet("Strategy Comparison", 1)
     put(comparison, 1, ["Alternative research strategies and holding periods"], bold=True)
-    note_row(comparison, 2, f"The scanner finds many ideas each day. Each scenario below is a different rule for choosing which of "
-                            f"those ideas to trade, so you can see which rule works best. Every scenario uses the same ideas, the same "
+    note_row(comparison, 2, f"The scanner finds many ideas each day. Each scenario below is a rule for choosing which of "
+                            f"those ideas to trade, so you can see whether the live trader's rules help. Every scenario uses the same ideas, the same "
                             f"entry price (the next 15-minute candle's open), the same stop and target, and the same costs, so the only "
                             f"difference is the choosing rule. Figures are pounds per £{args.position_gbp:.0f} trade, after 10p dealing "
                             f"and 50p stamp duty on buys.", last_col=10, chars_per_line=140)
     header(comparison, 4, ["Scenario name", "What it does, in plain English"])
     guide = [
-        ("Top 1 per day", f"Once a day at {args.pick_time}, take the scanner's single best-scoring idea. One trade a day, always at "
-                          f"{args.pick_time}. Question it answers: is the scanner's number 1 idea better than an average idea?"),
-        ("Top 2 per day", f"Once a day at {args.pick_time}, take the two best-scoring ideas (two different shares). Two trades a day. "
-                          "This is the 'Mock Trades' sheet."),
-        ("Top 2 per day, persistent", f"Like Top 2, but an idea only counts if the scanner had also flagged it in an earlier scan that "
-                                      f"morning. Example: Burberry flagged at 10:00 and still flagged at {args.pick_time} qualifies; an idea "
-                                      f"seen for the first time at {args.pick_time} does not. Up to two trades a day, sometimes none. "
-                                      "Question: do ideas that have lasted a while do better than brand-new ones?"),
         (LIVE, "No fixed time: takes a trade only when a scan finds an idea that passes every entry rule (3 touches, a "
                "rejection candle or a fresh reclaim, and a target worth at least 1.5x the possible loss after costs). At "
                "most one new trade per scan and 5 a day (3 a day before 23 Oct 2026); FTSE 100 shares only from 23 Oct 2026; some days "
@@ -705,8 +701,6 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
         widths(mock, [11, 10, 6, 28, 9, 10, 12, 9, 9, 9, 40, 16, 14, 14, 13, 12, 14, 13])
         mock.freeze_panes = "A3"
 
-    mock_sheet(mock, picks["Top 2 per day"],
-               f"Each day the mock trader takes the top 2 ideas from the first scan available at or after {args.pick_time}. ", "Scan time")
     mock_sheet(live_sheet, picks.get(LIVE, pd.DataFrame()),
                "Live mock trader: enters ideas as they trigger during the day, one new trade per scan, up to 5 a day (3 a day before 23 Oct 2026), one per share, FTSE 100 shares only from 23 Oct 2026; only ideas that pass the entry rules, including the check that the target would pay more than the stop could cost after costs. "
                "Each entry was saved the moment the scan ran (see scan_data/live_mock_trades.csv); signal time = when that scan finished. "
@@ -772,7 +766,7 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
         for row_idx in range(2, allout.max_row + 1):
             if isinstance(allout.cell(row_idx, col).value, (float, int)):
                 allout.cell(row_idx, col).number_format = money_format
-    for ws in (mock,live_sheet,daily):
+    for ws in (live_sheet,daily):
         start_row=2 if ws is daily else 3
         currency_cols=range(2, 2 + len(daily_names)) if ws is daily else range(13,19)
         for row_idx in range(start_row,ws.max_row+1):
@@ -814,7 +808,6 @@ def main() -> None:
     parser.add_argument("--period", default="60d", help="How much history to download (Yahoo max for 15m is 60d)")
     parser.add_argument("--horizons", default="1,2,5", help="Maximum holding periods to test, in trading days (default: 1,2,5)")
     parser.add_argument("--horizon", type=int, default=1, help="Holding period used for the detail sheets (default: 1 = same day)")
-    parser.add_argument("--pick-time", default="10:30", help="The mock trader decides at the first scan at or after this time (default: 10:30)")
     parser.add_argument("--last-entry", default="15:30", help="Ignore setups from scans after this time (default: 15:30)")
     parser.add_argument("--cost-pct", type=float, default=0.10, help="Assumed round-trip cost (spread + slippage) as %% of price (default: 0.10)")
     parser.add_argument("--stamp-duty-pct", type=float, default=0.5, help="Stamp duty %% on long entries, for the 'if you buy actual shares' column; 0 turns it off (default: 0.5)")
@@ -838,8 +831,7 @@ def main() -> None:
         sys.exit(1)
 
     pool = first_sightings(candidates)
-    runs = sc._read_table(data_dir / "runs.csv", sc.RUN_COLUMNS)
-    picks = build_picks(candidates, args.pick_time, runs)
+    picks = {}
     live = read_live(data_dir / LIVE_FILENAME)
     if not live.empty:
         trade_no = dict(zip(live["key"], pd.to_numeric(live["trade_no"], errors="coerce")))
@@ -862,7 +854,7 @@ def main() -> None:
     workbook = build_report(args, candidates, pool, picks, outcomes, kinds, generated)
     saved = sc.save_workbook(workbook, Path(args.out))
 
-    top2 = picks["Top 2 per day"]
+    top2 = picks.get(LIVE, pd.DataFrame())
     if not top2.empty:
         merged = top2.merge(outcomes[outcomes["horizon"] == args.horizon], on="key", suffixes=("", "_o"))
         merged = merged[merged["status"] == "done"]
@@ -870,7 +862,7 @@ def main() -> None:
             merged = add_costs(merged, args.cost_pct, args.stamp_duty_pct)
             stats = summarise(merged)
             net = pounds(merged, "r_net_stamp", args.position_gbp)
-            print(f"\nMock trader (top 2 per day, hold up to {args.horizon}d, £{args.position_gbp:.0f} per trade): {stats['n']} trades, "
+            print(f"\nLive mock trader (trigger points, hold up to {args.horizon}d, £{args.position_gbp:.0f} per trade): {stats['n']} trades, "
                   f"{pct(stats['target'])} hit target, average £{net.mean():.2f} per trade after all fees, total £{net.sum():.2f}.")
             if stats["n"] < 30:
                 print("That is far too few trades to conclude anything.")

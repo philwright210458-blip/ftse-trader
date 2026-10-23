@@ -211,16 +211,16 @@ class DecisionsAndStatistics(unittest.TestCase):
         outcomes = pd.DataFrame(
             [outcome(exit_time="2026-10-16T15:00:00+01:00"), outcome("missing", "missing_coverage", status="nodata")]
         )
-        picks = {name: frame.assign(rank=[1, 2]) for name in out.PICK_SCENARIOS}
+        picks = {out.LIVE: frame.assign(rank=[1, 2])}
         args = argparse.Namespace(
             horizons="1", horizon=1, cost_pct=0.0, stamp_duty_pct=0.0, pick_time="10:30", position_gbp=100.0
         )
         workbook = out.build_report(args, frame, frame, picks, outcomes, {}, "test")
-        row = [workbook["Summary"].cell(12, c).value for c in range(1, 6)]
-        self.assertEqual(row, [2, 1, 0, 0, 1])
-        self.assertEqual(sum(row[1:]), len(frame))
+        live = workbook["Live Mock Trades"]
+        self.assertEqual([live.cell(out.TOTALS_ROW, c).value for c in (2, 6)], [1, 1])
+        results = [live.cell(r, 11).value for r in range(out.TRADES_HEADER_ROW + 1, live.max_row + 1)]
+        self.assertEqual(sorted(results), ["No data", "Target hit"])
         self.assertEqual(workbook["Daily"].cell(2, 1).value, "2026-10-16")
-        self.assertNotIn("Break-even target-hit rate", [c.value for c in workbook["Strategy Comparison"][5]])
 
     def test_missing_outcome_retried_and_replaced_without_duplicates(self):
         missing = pd.DataFrame([outcome(status="nodata", result="missing_coverage")])

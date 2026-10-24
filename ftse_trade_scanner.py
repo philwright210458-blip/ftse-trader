@@ -778,7 +778,7 @@ def _write_mock_sheet(ws, rows: list[dict], info: "RunInfo") -> None:
                 cell.fill = PatternFill("solid", fgColor=colour)
     if not rows:
         ws.append(["", "", "No mock trades yet today."])
-    _add_note(ws, f"Mock trades made today (up to 5 open at once and 10 a day, one per share, FTSE 100 shares only, only at trigger points), with progress from completed 15-minute candles up to {info.as_of} UK. "
+    _add_note(ws, f"Mock trades made today (up to 5 open at once and 10 a day, one per share, FTSE 100 shares only, only ideas that pass every rule), with progress from completed 15-minute candles up to {info.as_of} UK. "
                   "Provisional: Yahoo prices can be up to 15 minutes behind. The final result is worked out at 17:05 "
                   "in ftse_outcomes.xlsx (Live Mock Trades sheet). Costs per £100: 10p dealing, plus 50p stamp duty on buys.")
 
@@ -914,9 +914,9 @@ def main() -> None:
     parser.add_argument("--live-max-open", type=int, default=5,
                         help="Live mock trader: most trades open at the same time; a trade that stops out or hits its "
                              "target frees its slot (default: 5; 0 = no limit on open trades)")
-    parser.add_argument("--live-max-per-scan", type=int, default=1,
-                        help="Live mock trader: most new paper trades from any one scan (default: 1), so the day's "
-                             "trades come from different moments rather than all at once")
+    parser.add_argument("--live-max-per-scan", type=int, default=0,
+                        help="Live mock trader: most new paper trades from any one scan (default: 0 = no limit; every idea "
+                             "that passes the rules is taken while open and daily slots remain)")
     parser.add_argument("--live-index", default="FTSE 100",
                         help="Live mock trader: only trade shares in this index (default: FTSE 100, whose Yahoo data is "
                              "more complete); use '' for every share. The scan itself still covers every share")

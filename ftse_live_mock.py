@@ -7,7 +7,8 @@ within one scan), up to a daily limit, one trade per share per day, and (from
 from different moments rather than all from the first scan. From 26 Oct 2026
 the limit is on trades OPEN at the same time (default 5): a trade that has
 stopped out or hit its target frees its slot for a later scan, with a ceiling
-of 10 trades a day. The entry
+of 10 trades a day, and the one-trade-per-scan limit is off: every idea in a
+scan that passes the rules is taken while slots remain. The entry
 is written to scan_data/live_mock_trades.csv immediately and committed with
 the scan, so the decision is fixed before anyone knows how the price moves.
 

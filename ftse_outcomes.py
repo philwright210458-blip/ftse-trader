@@ -502,8 +502,8 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
 
     # ---------------- Live mock trades: title and totals ----------------
     put(live_sheet, 1, ["Live mock trades (paper only, no real orders)"], bold=True)
-    note_row(live_sheet, 2, f"Generated {generated}. The live mock trader enters ideas as they trigger during the day: one new trade "
-                            "per scan, up to 5 open at once and 10 a day (before 26 Oct 2026: 5 a day; before 23 Oct: 3 a day), one per share, FTSE 100 shares only from 23 Oct 2026, "
+    note_row(live_sheet, 2, f"Generated {generated}. The live mock trader enters ideas as they trigger during the day: every "
+                            "idea that passes the rules, up to 5 open at once and 10 a day (before 26 Oct 2026: 1 new trade per scan and 5 a day; before 23 Oct: 3 a day), one per share, FTSE 100 shares only from 23 Oct 2026, "
                             "and only ideas that pass the entry rules, including the check that the target would pay more than the stop "
                             "could cost after costs. Each entry was saved the moment the scan ran (scan_data/live_mock_trades.csv) and "
                             "is filled at the open of the next 15-minute candle. Trades close at the target, the stop, or the end of the day.",

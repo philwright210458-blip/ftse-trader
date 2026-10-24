@@ -75,7 +75,8 @@ def record_live_mock(data_dir: Path, info, candidates, max_per_day: int = DEFAUL
     taken = set(today["ticker"])
     data_time = info.data_time.isoformat()
     rows = []
-    for setup in sorted(candidates, key=lambda s: s.quality_score, reverse=True):
+    # Ideas the morning picker agrees with go first (from 26 Oct 2026), then by quality score.
+    for setup in sorted(candidates, key=lambda s: (getattr(s, "picker_agrees", False), s.quality_score), reverse=True):
         if setup.conflict or getattr(setup, "stale", False) or setup.ticker in taken:
             continue
         taken.add(setup.ticker)

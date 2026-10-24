@@ -929,6 +929,9 @@ def main() -> None:
                              "(default: 2; 0 turns the cap off)")
     parser.add_argument("--target-cap-days", type=int, default=TARGET_CAP_DAYS,
                         help="Days used for the share's typical daily move (default: 10)")
+    parser.add_argument("--picker", choices=["filter", "off"], default="filter",
+                        help="Use the morning picker's views (scan_data/picker/<day>.csv): skip ideas against them and "
+                             "trade agreeing ideas first (default: filter; off ignores them)")
     parser.add_argument("--refresh-mock", action="store_true",
                         help="After the close: re-check today's mock trades to the end of the day and rewrite the "
                              "workbook (no scan, nothing recorded). Run by the 17:05 outcomes workflow")
@@ -991,6 +994,15 @@ def main() -> None:
     fresh = [setup for setup in all_setups if not setup.stale]
     annotate_conflicts(fresh)
     rule_excluded = 0 if args.no_entry_rules else apply_entry_rules(fresh)
+    picker_skipped, picker_note = 0, ""
+    if args.picker != "off":
+        from ftse_picker import apply_views, load_views
+        views = load_views(data_dir, info.day)
+        if views is None:
+            picker_note = f"No morning picker file for {info.day}; scanning without it."
+        else:
+            picker_skipped = apply_views(fresh, views)
+            picker_note = (f"Morning picker: {len(views)} share view(s); {picker_skipped} idea(s) skipped as against it.")
     selected = dedupe_setups(fresh)
     ranked = sorted((s for s in selected if not s.conflict), key=lambda s: s.quality_score, reverse=True)
     if args.top > 0:
@@ -1019,6 +1031,8 @@ def main() -> None:
           f"{sum(s.conflict for s in selected)} conflicting/weaker excluded from Top Trades.")
     if rule_excluded:
         print(f"{rule_excluded} setup(s) excluded by the entry rules (seen both ways, no rejection candle, or reclaim too shallow).")
+    if picker_note:
+        print(picker_note)
     if info.data_check:
         print(info.data_check)
     if failures:

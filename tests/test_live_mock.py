@@ -136,6 +136,32 @@ class MockProgressTests(unittest.TestCase):
             self.assertEqual(sc.refresh_mock_workbook(folder, folder / "s.xlsx", "15m", other), 0)
             self.assertFalse((folder / "s.xlsx").exists())
 
+    def test_closed_trades_free_their_slots(self):
+        self.dir = Path(tempfile.mkdtemp())
+        first = live.record_live_mock(self.dir, info("2026-10-19 10:18:00"),
+                                      [setup(t, 90 - n) for n, t in enumerate(["A.L", "B.L", "C.L", "D.L", "E.L", "F.L"])],
+                                      10, max_open=5, open_now=0)
+        self.assertEqual([r["ticker"] for r in first], ["A.L", "B.L", "C.L", "D.L", "E.L"])   # several from one scan
+        self.assertEqual(live.record_live_mock(self.dir, info("2026-10-19 10:33:00"), [setup("G.L", 99)],
+                                               10, max_open=5, open_now=5), [])               # all 5 still open
+        later = live.record_live_mock(self.dir, info("2026-10-19 12:03:00"), [setup("G.L", 99), setup("H.L", 98),
+                                      setup("A.L", 97)], 10, max_open=5, open_now=3)          # 2 have closed
+        self.assertEqual([(r["ticker"], r["trade_no"]) for r in later], [("G.L", 6), ("H.L", 7)])  # A.L already traded today
+
+    def test_daily_ceiling_still_applies(self):
+        self.dir = Path(tempfile.mkdtemp())
+        live.record_live_mock(self.dir, info("2026-10-19 10:18:00"), [setup(f"S{n}.L", 90 - n) for n in range(9)],
+                              10, max_open=0)
+        rows = live.record_live_mock(self.dir, info("2026-10-19 11:03:00"), [setup("X.L", 99), setup("Y.L", 98)],
+                                     10, max_open=5, open_now=0)
+        self.assertEqual([r["ticker"] for r in rows], ["X.L"])
+
+    def test_still_open_counts_unknown_as_open(self):
+        rows = [{"progress": {"status": s}} for s in ("Open", "Stopped out", "Target hit", "Closed at end of day",
+                                                       "Skipped: opened past the stop or target", "Waiting for entry candle",
+                                                       "Price check unavailable")]
+        self.assertEqual(live.still_open(rows), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

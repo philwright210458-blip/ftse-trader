@@ -4,7 +4,11 @@ Each full or watch scan calls `record_live_mock` straight after saving its
 setups. New ideas are entered in the order they trigger (best score first
 within one scan), up to a daily limit, one trade per share per day, and (from
 22 Oct 2026) at most one new trade from any one scan, so the day's trades come
-from different moments rather than all from the first scan. The entry
+from different moments rather than all from the first scan. From 26 Oct 2026
+the limit is on trades OPEN at the same time (default 5): a trade that has
+stopped out or hit its target frees its slot for a later scan, with a ceiling
+of 10 trades a day, and the one-trade-per-scan limit is off: every idea in a
+scan that passes the rules is taken while slots remain. The entry
 is written to scan_data/live_mock_trades.csv immediately and committed with
 the scan, so the decision is fixed before anyone knows how the price moves.
 
@@ -24,7 +28,9 @@ import pandas as pd
 LIVE_FILENAME = "live_mock_trades.csv"
 LIVE_COLUMNS = ["day", "signal_time", "data_time", "mode", "trade_no", "company", "ticker", "index", "setup",
                 "direction", "score", "entry", "stop", "target", "risk_pct", "key"]
-DEFAULT_MAX_PER_DAY = 5
+DEFAULT_MAX_PER_DAY = 10
+DEFAULT_MAX_OPEN = 5
+CLOSED_STATUSES = ("Stopped out", "Target hit", "Closed at end of day", "Skipped")   # anything else counts as open
 DEFAULT_LAST_ENTRY = "15:30"
 
 
@@ -39,8 +45,14 @@ def read_live(path: Path) -> pd.DataFrame:
     return pd.read_csv(path, dtype=str, keep_default_na=False)
 
 
+def still_open(progress_rows: list[dict]) -> int:
+    """How many of today's trades are still open (or can't be checked, which counts as open to be safe)."""
+    return sum(not str(row.get("progress", {}).get("status", "")).startswith(CLOSED_STATUSES) for row in progress_rows)
+
+
 def record_live_mock(data_dir: Path, info, candidates, max_per_day: int = DEFAULT_MAX_PER_DAY,
-                     last_entry: str = DEFAULT_LAST_ENTRY, max_per_scan: int | None = None) -> list[dict]:
+                     last_entry: str = DEFAULT_LAST_ENTRY, max_per_scan: int | None = None,
+                     max_open: int | None = None, open_now: int = 0) -> list[dict]:
     """Enter new live mock trades from this scan. Returns the rows added.
 
     `info` is the scanner's RunInfo; `candidates` are this scan's non-conflicting
@@ -54,6 +66,8 @@ def record_live_mock(data_dir: Path, info, candidates, max_per_day: int = DEFAUL
     existing = read_live(path)
     today = existing[existing["day"] == info.day]
     slots = max_per_day - len(today)
+    if max_open is not None and max_open > 0:
+        slots = min(slots, max_open - open_now)  # a closed trade frees its slot
     if max_per_scan is not None and max_per_scan > 0:
         slots = min(slots, max_per_scan)        # spread the day's trades over different scans
     if slots <= 0:

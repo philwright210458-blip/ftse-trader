@@ -778,7 +778,7 @@ def _write_mock_sheet(ws, rows: list[dict], info: "RunInfo") -> None:
                 cell.fill = PatternFill("solid", fgColor=colour)
     if not rows:
         ws.append(["", "", "No mock trades yet today."])
-    _add_note(ws, f"Mock trades made today (up to 5, FTSE 100 shares only, only at trigger points), with progress from completed 15-minute candles up to {info.as_of} UK. "
+    _add_note(ws, f"Mock trades made today (up to 5 open at once and 10 a day, one per share, FTSE 100 shares only, only ideas that pass every rule), with progress from completed 15-minute candles up to {info.as_of} UK. "
                   "Provisional: Yahoo prices can be up to 15 minutes behind. The final result is worked out at 17:05 "
                   "in ftse_outcomes.xlsx (Live Mock Trades sheet). Costs per £100: 10p dealing, plus 50p stamp duty on buys.")
 
@@ -909,11 +909,14 @@ def main() -> None:
                              "freshest candle in the scan; 0 turns the guard off (default: 30)")
     parser.add_argument("--exclude-trusts", action="store_true",
                         help="Leave out investment trusts and funds (the 'type' column in ftse_universe.csv)")
-    parser.add_argument("--live-max-per-day", type=int, default=5,
-                        help="Live mock trader: most new paper trades entered per day, in the order they trigger (default: 5; 0 turns it off)")
-    parser.add_argument("--live-max-per-scan", type=int, default=1,
-                        help="Live mock trader: most new paper trades from any one scan (default: 1), so the day's "
-                             "trades come from different moments rather than all at once")
+    parser.add_argument("--live-max-per-day", type=int, default=10,
+                        help="Live mock trader: most paper trades entered in a day, in the order they trigger (default: 10; 0 turns it off)")
+    parser.add_argument("--live-max-open", type=int, default=5,
+                        help="Live mock trader: most trades open at the same time; a trade that stops out or hits its "
+                             "target frees its slot (default: 5; 0 = no limit on open trades)")
+    parser.add_argument("--live-max-per-scan", type=int, default=0,
+                        help="Live mock trader: most new paper trades from any one scan (default: 0 = no limit; every idea "
+                             "that passes the rules is taken while open and daily slots remain)")
     parser.add_argument("--live-index", default="FTSE 100",
                         help="Live mock trader: only trade shares in this index (default: FTSE 100, whose Yahoo data is "
                              "more complete); use '' for every share. The scan itself still covers every share")
@@ -999,8 +1002,10 @@ def main() -> None:
         from ftse_live_mock import record_live_mock
         live_candidates = [s for s in selected if not s.conflict
                            and (not args.live_index or s.index_label == args.live_index)]
+        from ftse_live_mock import still_open
+        open_now = still_open(todays_mock_trades(data_dir, info, args.interval)) if args.live_max_open > 0 else 0
         live_rows = record_live_mock(data_dir, info, live_candidates, args.live_max_per_day,
-                                     max_per_scan=args.live_max_per_scan)
+                                     max_per_scan=args.live_max_per_scan, max_open=args.live_max_open, open_now=open_now)
     runs = _read_table(data_dir / "runs.csv", RUN_COLUMNS)
     setups_history = _read_table(data_dir / "setups.csv", SETUP_COLUMNS)
     mock_rows = todays_mock_trades(data_dir, info, args.interval)

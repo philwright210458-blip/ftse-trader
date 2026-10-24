@@ -414,6 +414,45 @@ MIN_NET_REWARD_RISK = 1.5          # target's gain after costs must be at least 
 COSTS_PCT = {"Long": 0.60, "Short": 0.10}   # per £100: dealing 0.10% + stamp duty 0.5% on buys
 
 
+# Target cap (Phil, 24 Oct 2026; ideas register 27): a same-day trade's target is brought in to the
+# smaller of TARGET_CAP_PCT and the share's typical daily move (median high-to-low move of the
+# previous TARGET_CAP_DAYS sessions, as % of the day's open). Applied before the entry rules, so the
+# "worth it after costs" check uses the capped target.
+TARGET_CAP_PCT = 2.0
+TARGET_CAP_DAYS = 10
+
+
+def typical_daily_move_pct(df: pd.DataFrame, days: int = TARGET_CAP_DAYS) -> float | None:
+    """Median (high - low) / open, in %, over the `days` sessions before the latest candle's day."""
+    if df.empty:
+        return None
+    by_day = df.groupby(df.index.date).agg(high=("high", "max"), low=("low", "min"), open=("open", "first"))
+    previous = by_day[by_day.index < df.index[-1].date()].tail(days)
+    if len(previous) < days:
+        return None
+    moves = (previous["high"] - previous["low"]) / previous["open"] * 100
+    return float(moves.median())
+
+
+def cap_target(setup: TradeSetup, df: pd.DataFrame, max_pct: float = TARGET_CAP_PCT,
+               days: int = TARGET_CAP_DAYS) -> bool:
+    """Bring the target in to the smaller of max_pct and the share's typical daily move. True if it moved.
+
+    max_pct <= 0 turns the cap off. Without enough history for the typical move, max_pct alone applies."""
+    if max_pct <= 0 or setup.entry <= 0:
+        return False
+    typical = typical_daily_move_pct(df, days)
+    cap = min(max_pct, typical) if typical else max_pct
+    distance = abs(setup.target - setup.entry) / setup.entry * 100
+    if distance <= cap:
+        return False
+    old = setup.target
+    setup.target = setup.entry * (1 + cap / 100) if setup.direction == "Long" else setup.entry * (1 - cap / 100)
+    reason = f"typical daily move {typical:.1f}%" if typical and typical < max_pct else f"{max_pct:g}% maximum"
+    setup.note = f"{setup.note} Target capped at {cap:.2f}% ({reason}; was {old:.2f}).".strip()
+    return True
+
+
 def entry_rule_note(setup: TradeSetup, df: pd.DataFrame) -> str:
     """Empty if the setup's signal candle passes its entry rule, otherwise the reason it fails."""
     if len(df) < 15:
@@ -809,7 +848,8 @@ def save_workbook(workbook: Workbook, path: Path) -> Path:
 # Scanning
 # ----------------------------------------------------------------------
 
-def run_scan(universe: list[Constituent], interval: str, period: str, delay: float, batch: bool = False):
+def run_scan(universe: list[Constituent], interval: str, period: str, delay: float, batch: bool = False,
+             target_cap_pct: float = TARGET_CAP_PCT, target_cap_days: int = TARGET_CAP_DAYS):
     all_setups: list[TradeSetup] = []
     failures: list[str] = []
     latest: pd.Timestamp | None = None
@@ -837,6 +877,7 @@ def run_scan(universe: list[Constituent], interval: str, period: str, delay: flo
             closes = data.index[-1] + pd.Timedelta(minutes=interval_minutes(interval) or 0)
             for setup in setups:
                 setup.kind, setup.last_trade = company.kind, closes
+                cap_target(setup, data, target_cap_pct, target_cap_days)
                 setup.filter_note = entry_rule_note(setup, data)
             all_setups.extend(setups)
             if setups:
@@ -880,6 +921,11 @@ def main() -> None:
                         help="Download shares one at a time instead of in batches (slower; for troubleshooting)")
     parser.add_argument("--no-entry-rules", action="store_true",
                         help="Turn off the entry rules added on 21 Oct 2026 (seen-both-ways, rejection candle, reclaim distance)")
+    parser.add_argument("--target-cap-pct", type=float, default=TARGET_CAP_PCT,
+                        help="Cap each target at the smaller of this %% and the share's typical daily move "
+                             "(default: 2; 0 turns the cap off)")
+    parser.add_argument("--target-cap-days", type=int, default=TARGET_CAP_DAYS,
+                        help="Days used for the share's typical daily move (default: 10)")
     parser.add_argument("--refresh-mock", action="store_true",
                         help="After the close: re-check today's mock trades to the end of the day and rewrite the "
                              "workbook (no scan, nothing recorded). Run by the 17:05 outcomes workflow")
@@ -920,7 +966,8 @@ def main() -> None:
         print(f"Scanning {len(universe)} companies ({'/'.join(sorted(set(company.index for company in universe)))})...")
 
     all_setups, failures, latest, lags = run_scan(universe, args.interval, args.period, args.delay,
-                                                   batch=not args.one_by_one)
+                                                   batch=not args.one_by_one, target_cap_pct=args.target_cap_pct,
+                                                   target_cap_days=args.target_cap_days)
     if latest is None:
         print("No usable data came back (market closed, or Yahoo unavailable). Nothing recorded.")
         sys.exit(1)

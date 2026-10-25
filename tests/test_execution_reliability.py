@@ -225,3 +225,27 @@ class MomentumRecovery(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DelayedCandleClock(unittest.TestCase):
+    def test_todays_mock_trades_use_the_scan_data_time_not_the_wall_clock(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        import ftse_live_mock as live
+        import ftse_trade_scanner as sc
+        idx = pd.date_range("2026-10-26 09:15", periods=3, freq="15min", tz=sc.UK_TZ)   # 10:00 candle not published yet
+        data = pd.DataFrame({"open": [100, 100.2, 100.1], "high": [100.3, 100.4, 100.3], "low": [99.9, 100, 99.95],
+                             "close": [100.2, 100.1, 100.2], "volume": 1000}, index=idx)
+        with tempfile.TemporaryDirectory() as folder:
+            pd.DataFrame([{"day": "2026-10-26", "signal_time": "2026-10-26 09:02:00", "data_time": "2026-10-26T08:45:00+00:00",
+                           "mode": "watch", "trade_no": 1, "company": "A", "ticker": "A.L", "index": "FTSE 100",
+                           "setup": "Range", "direction": "Short", "score": 70, "entry": 100, "stop": 101, "target": 98,
+                           "risk_pct": 1, "key": "k"}]).to_csv(Path(folder) / live.LIVE_FILENAME, index=False)
+            info = sc.RunInfo(pd.Timestamp("2026-10-26 09:45", tz=sc.UK_TZ), "10:00", "2026-10-26",
+                              "2026-10-26 10:17:00", "watch", 100, 0)
+            with patch.object(sc, "fetch_data", return_value=data), \
+                    patch.object(sc, "completed_candles", side_effect=lambda f, *a, **k: f):
+                rows = sc.todays_mock_trades(Path(folder), info, "15m")
+        self.assertEqual(rows[0]["progress"]["status"], "Open")
+

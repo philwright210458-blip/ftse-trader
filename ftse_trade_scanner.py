@@ -775,7 +775,11 @@ def todays_mock_trades(data_dir: Path, info: "RunInfo", interval: str) -> list[d
             data = drop_untraded_bars(completed_candles(fetch_data(row["ticker"], interval, "5d"), interval))
         except Exception:
             data = None
-        row["progress"] = mock_progress(row, data, interval_minutes(interval) or 15, now=market_stamp(info.run_time))
+        # Observe up to the newest candle this scan actually received, not the wall clock: Yahoo often
+        # publishes each 15-minute candle a few minutes late, which would otherwise read as missing prices.
+        seen_to = market_stamp(info.data_time) + pd.Timedelta(minutes=interval_minutes(interval) or 15)
+        row["progress"] = mock_progress(row, data, interval_minutes(interval) or 15,
+                                        now=min(seen_to, market_stamp(info.run_time)))
     return rows
 
 

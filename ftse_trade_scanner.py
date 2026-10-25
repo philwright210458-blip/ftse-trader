@@ -897,9 +897,10 @@ def main() -> None:
                              "(default: 2; 0 turns the cap off)")
     parser.add_argument("--target-cap-days", type=int, default=TARGET_CAP_DAYS,
                         help="Days used for the share's typical daily move (default: 10)")
-    parser.add_argument("--picker", choices=["filter", "off"], default="filter",
-                        help="Use the morning picker's views (scan_data/picker/<day>.csv): skip ideas against them and "
-                             "trade agreeing ideas first (default: filter; off ignores them)")
+    parser.add_argument("--picker", choices=["annotate", "filter", "off"], default="annotate",
+                        help="Morning picker views (scan_data/picker/<day>.csv): annotate = label ideas only, trades "
+                             "unchanged (default); filter = skip ideas against them and trade agreeing ideas first; "
+                             "off = ignore them")
     parser.add_argument("--refresh-mock", action="store_true",
                         help="After the close: re-check today's mock trades to the end of the day and rewrite the "
                              "workbook (no scan, nothing recorded). Run by the 17:05 outcomes workflow")
@@ -969,8 +970,14 @@ def main() -> None:
         if views is None:
             picker_note = f"No morning picker file for {info.day}; scanning without it."
         else:
-            picker_skipped = apply_views(fresh, views)
-            picker_note = (f"Morning picker: {len(views)} share view(s); {picker_skipped} idea(s) skipped as against it.")
+            if args.picker == "filter":
+                picker_skipped = apply_views(fresh, views)
+                picker_note = (f"Morning picker: {len(views)} share view(s); {picker_skipped} idea(s) skipped as against it.")
+            else:                                   # annotate: labels only, trades unchanged
+                from ftse_picker import annotate_views
+                counts = annotate_views([s for s in fresh if not s.conflict], views)
+                picker_note = (f"Morning picker (labels only, trades unchanged): {len(views)} share view(s); "
+                               + ", ".join(f"{k} {v}" for k, v in counts.items()) + ".")
     selected = dedupe_setups(fresh)
     ranked = sorted((s for s in selected if not s.conflict), key=lambda s: s.quality_score, reverse=True)
     if args.top > 0:

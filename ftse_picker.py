@@ -8,13 +8,15 @@ company announcements and market mood, and writes scan_data/picker/YYYY-MM-DD.cs
 
 view is Buy, Sell or Avoid. Shares not listed are neutral.
 
-The scanner uses the views as an extra rule (--picker filter, the default):
-  * an idea against the picker's view (a buy when it says Sell, a sell when it says Buy),
-    or on a share it says to Avoid, is skipped and logged with the reason;
-  * the live trader takes ideas the picker agrees with first when places are limited;
-  * neutral shares are traded exactly as before.
+Modes (scanner --picker):
+  * annotate (the default from 26 Oct 2026, Phil's choice): label each idea Agrees / Opposes /
+    Avoid / No view and print a count; trades are exactly as without the picker, so its value
+    can be measured cleanly first (research design stage 1).
+  * filter: an idea against the picker's view (a buy when it says Sell, a sell when it says Buy),
+    or on a share it says to Avoid, is skipped and logged with the reason; the live trader takes
+    ideas the picker agrees with first when places are limited.
+  * off: ignore the file.
 If there is no file for the day (the task didn't run), the scanner works as before.
---picker off ignores the file.
 """
 
 from __future__ import annotations
@@ -47,6 +49,29 @@ def load_views(data_dir: Path, day: str) -> dict[str, tuple[str, str]] | None:
         if ticker and view in ("Buy", "Sell", "Avoid"):
             views[ticker] = (view, str(row.get("reason", "")).strip())
     return views
+
+
+def alignment(setup, views: dict[str, tuple[str, str]]) -> str:
+    """Agrees, Opposes, Avoid or No view for one idea."""
+    view = views.get(setup.ticker.upper())
+    if not view:
+        return "No view"
+    if view[0] == "Avoid":
+        return "Avoid"
+    return "Agrees" if VIEWS[view[0]] == setup.direction else "Opposes"
+
+
+def annotate_views(setups: list, views: dict[str, tuple[str, str]]) -> dict[str, int]:
+    """Label ideas with the picker's view without changing anything else. Returns counts per label."""
+    counts = {"Agrees": 0, "Opposes": 0, "Avoid": 0, "No view": 0}
+    for setup in setups:
+        label = alignment(setup, views)
+        setup.picker_alignment = label
+        counts[label] += 1
+        if label != "No view":
+            word, reason = views[setup.ticker.upper()]
+            setup.note = f"{setup.note} Morning picker: {word} ({label.lower()})".strip() + (f": {reason}." if reason else ".")
+    return counts
 
 
 def apply_views(setups: list, views: dict[str, tuple[str, str]]) -> int:

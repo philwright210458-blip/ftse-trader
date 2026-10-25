@@ -57,6 +57,16 @@ class PickerTests(unittest.TestCase):
         rows = live.record_live_mock(self.dir, info, ideas, 10, max_open=1, open_now=0)
         self.assertEqual([r["ticker"] for r in rows], ["B.L"])
 
+    def test_annotate_labels_without_changing_trades(self):
+        views = {"A.L": ("Buy", "Upgrade"), "B.L": ("Sell", ""), "C.L": ("Avoid", "Results today")}
+        ideas = [setup("A.L"), setup("B.L"), setup("C.L", "Short"), setup("D.L")]
+        counts = picker.annotate_views(ideas, views)
+        self.assertEqual(counts, {"Agrees": 1, "Opposes": 1, "Avoid": 1, "No view": 1})
+        self.assertEqual([s.picker_alignment for s in ideas], ["Agrees", "Opposes", "Avoid", "No view"])
+        self.assertFalse(any(s.conflict for s in ideas))
+        self.assertFalse(any(getattr(s, "picker_agrees", False) for s in ideas))   # no priority in the live trader
+        self.assertIn("Morning picker: Avoid (avoid): Results today.", ideas[2].note)
+
 
 if __name__ == "__main__":
     unittest.main()

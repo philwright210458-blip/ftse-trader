@@ -59,7 +59,7 @@ export function validateArchive(s) {
           ? ["runs.csv"]
           : key === "setups"
             ? ["setups.csv"]
-            : ["outcomes.csv", "outcomes.v2.csv"];
+            : ["outcomes.csv", "outcomes.v2.csv", "outcomes.v3.csv"];
       const required =
         key === "runs"
           ? [
@@ -107,7 +107,7 @@ export function validateArchive(s) {
   }
   for (const file of source.files) {
     if (
-      !["runs.csv", "setups.csv", "outcomes.csv", "outcomes.v2.csv"].includes(
+      !["runs.csv", "setups.csv", "outcomes.csv", "outcomes.v2.csv", "outcomes.v3.csv"].includes(
         file.name,
       ) ||
       !/^[a-f0-9]{64}$/.test(file.sha256) ||

@@ -2,6 +2,9 @@
 
 Phil's paper-trading research on FTSE 100 and FTSE 250 shares. **Nothing here places real orders. It is a test of screening models, not trading advice.**
 
+Reliability update: [plain-English notes for Phil](docs/RELIABILITY_NOTES_FOR_PHIL.md),
+including missing-price handling and how to read recovered results. [Technical details and historical impact](docs/RELIABILITY_REVIEW.md).
+
 ## What runs automatically (Mon-Fri, on GitHub)
 
 The timers are on cron-job.org; each one starts a GitHub workflow.
@@ -30,7 +33,7 @@ Workflows run by hand from the Actions tab: **FTSE Backtest**, **FTSE Range v2 B
 
 - `ftse_universe.csv`: the 350 shares (the `type` column marks investment trusts).
 - `scan_data/`: the live history (setups, runs, outcomes, live mock trades, momentum orders). Don't edit by hand.
-  `outcomes.csv` is the old version 1 results, kept for reference and the dashboard; `outcomes.v2.csv` is the corrected one.
+  `outcomes.csv` is the old version 1 results, kept for reference and the dashboard; `outcomes.v2.csv` retains the previous results; `outcomes.v3.csv` uses the shared execution rules.
 - `results/`: backtest workbooks.
 - `tests/`: automatic checks (`python -m unittest discover -s tests`). They run on every pull request.
 - `docs/`: `IDEAS.md` (copy of the ideas register; the Claude Doc is the master), `LEGACY_SCANNER.md` (the scanner guide and its rules), and the research app guides.

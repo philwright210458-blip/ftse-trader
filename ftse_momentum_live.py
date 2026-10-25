@@ -42,6 +42,7 @@ DECIDE_AFTER = "16:45"                 # UK time: month-end decisions only once 
 DATA_DIR = Path(__file__).parent / "scan_data" / "momentum_live"
 ORDERS_FILE = "orders.csv"
 WORKBOOK = Path(__file__).parent / "ftse_momentum_live.xlsx"
+WAITING = ("planned", "waiting for opening prices")
 ORDER_COLUMNS = ["decided_for", "recorded_at", "action", "ticker", "company", "rank", "score", "reason", "status",
                  "fill_date", "fill_price", "units", "amount_gbp", "costs_gbp"]
 
@@ -109,12 +110,12 @@ class Market:
         return ranked.drop(index=mm.BENCHMARK_TICKER, errors="ignore")      # the tracker fund is not a pick
 
     def open_price(self, ticker: str, day) -> float | None:
+        """Only the observed open of this exact session may execute an order."""
         day = pd.Timestamp(day)
-        value = self.open.at[day, ticker] if ticker in self.open.columns else np.nan
-        if not (math.isfinite(value) and value > 0):
-            earlier = self.close_ff[ticker].loc[:day].iloc[:-1] if ticker in self.close_ff.columns else pd.Series(dtype=float)
-            value = earlier.iloc[-1] if len(earlier) else np.nan
-        return float(value) if math.isfinite(value) and value > 0 else None
+        if ticker not in self.open.columns or day not in self.open.index:
+            return None
+        value = self.open.at[day, ticker]
+        return float(value) if pd.notna(value) and math.isfinite(value) and value > 0 else None
 
 
 # ----------------------------------------------------------------------
@@ -130,7 +131,9 @@ def read_orders(folder: Path) -> pd.DataFrame:
 
 def write_orders(folder: Path, orders: pd.DataFrame) -> None:
     folder.mkdir(parents=True, exist_ok=True)
-    orders[ORDER_COLUMNS].to_csv(folder / ORDERS_FILE, index=False)
+    temporary = folder / (ORDERS_FILE + ".tmp")
+    orders[ORDER_COLUMNS].to_csv(temporary, index=False)
+    temporary.replace(folder / ORDERS_FILE)
 
 
 def positions(orders: pd.DataFrame) -> list[dict]:
@@ -218,8 +221,14 @@ def fill(day: pd.Timestamp, orders: pd.DataFrame, market: Market) -> pd.DataFram
     for column in ("decided_for", "recorded_at", "action", "ticker", "company", "reason", "status", "fill_date"):
         orders[column] = orders[column].astype(object)
     trade_day = next_session(day)
-    mine = orders.index[(orders["decided_for"] == str(day.date())) & (orders["status"] == "planned")]
+    mine = orders.index[(orders["decided_for"] == str(day.date())) & orders["status"].isin(WAITING)]
     holdings = {p["ticker"]: p for p in positions(orders) if not p["sold"]}
+    required = [i for i in mine if orders.at[i, "action"] in ("Buy", "Sell")]
+    if any(market.open_price(orders.at[i, "ticker"], trade_day) is None for i in required):
+        # Wait for the whole rebalance. This reserves cash for every intended buy
+        # and avoids spending proceeds from a sale with no observed opening price.
+        orders.loc[required, "status"] = "waiting for opening prices"
+        return orders
     for i in mine:
         if orders.at[i, "action"] == "No change":
             orders.loc[i, ["status", "fill_date"]] = ["done", str(trade_day.date())]
@@ -227,7 +236,7 @@ def fill(day: pd.Timestamp, orders: pd.DataFrame, market: Market) -> pd.DataFram
         ticker = orders.at[i, "ticker"]
         price = market.open_price(ticker, trade_day)
         if price is None or ticker not in holdings:
-            orders.at[i, "status"] = "not filled (no price)"
+            orders.at[i, "status"] = "not filled (no holding)"
             continue
         units = holdings[ticker]["units"]
         gross = units * price
@@ -235,10 +244,6 @@ def fill(day: pd.Timestamp, orders: pd.DataFrame, market: Market) -> pd.DataFram
             "filled", str(trade_day.date()), round(price, 4), units, round(gross * (1 - mm.DEALING), 2),
             round(gross * mm.DEALING, 2)]
     buys = [(i, market.open_price(orders.at[i, "ticker"], trade_day)) for i in mine if orders.at[i, "action"] == "Buy"]
-    for i, price in buys:
-        if price is None:
-            orders.at[i, "status"] = "not filled (no price)"
-    buys = [(i, p) for i, p in buys if p is not None]
     cash = cash_now(orders)
     if buys and cash > 1:
         each = math.floor(cash / len(buys) * 100) / 100
@@ -247,6 +252,8 @@ def fill(day: pd.Timestamp, orders: pd.DataFrame, market: Market) -> pd.DataFram
             orders.loc[i, ["status", "fill_date", "fill_price", "units", "amount_gbp", "costs_gbp"]] = [
                 "filled", str(trade_day.date()), round(price, 4), units, each,
                 round(each - units * price, 2)]
+    elif buys:
+        orders.loc[[i for i, _ in buys], "status"] = "not filled (insufficient cash)"
     return orders
 
 
@@ -261,12 +268,14 @@ def step(orders: pd.DataFrame, market: Market, names: dict, now: pd.Timestamp,
             if not market.has(day):
                 break                                           # that month-end's prices are not in yet
             orders = decide(day, orders, market, names, now, settings)
-        waiting = (orders["decided_for"] == str(day.date())) & (orders["status"] == "planned")
+        waiting = (orders["decided_for"] == str(day.date())) & orders["status"].isin(WAITING)
         if waiting.any():
             trade_day = next_session(day)
             if trade_day > today or not market.has(trade_day):
                 break                                           # fills wait for the next morning's prices
             orders = fill(day, orders, market)
+            if ((orders["decided_for"] == str(day.date())) & orders["status"].isin(WAITING)).any():
+                break  # unresolved rebalance must not leak cash/holdings into later decisions
     return orders
 
 

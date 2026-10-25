@@ -68,3 +68,21 @@ class PublisherTests(unittest.TestCase):
     def test_naive_publication_clock_rejected(self):
         with self.assertRaises(ValueError):
             publisher.build_snapshot(now=dt.datetime(2026, 10, 17))
+
+    def test_v3_supersedes_v2_without_mixing_execution_versions(self):
+        original = subprocess.check_output
+
+        def output(args, **kwargs):
+            if args[:2] == ["git", "show"] and args[2].endswith(":scan_data/outcomes.v3.csv"):
+                return original([*args[:2], args[2].replace("outcomes.v3.csv", "outcomes.v2.csv")], **kwargs)
+            raw = original(args, **kwargs)
+            if args[:2] == ["git", "ls-tree"]:
+                return raw + "scan_data/outcomes.v3.csv\n"
+            return raw
+
+        with patch.object(subprocess, "check_output", side_effect=output):
+            snapshot = publisher.build_snapshot()
+        files = {f["name"]: f for f in snapshot["source"]["files"]}
+        self.assertNotIn("outcomes.v2.csv", files)
+        self.assertIn("corrected-cache-v3", files["outcomes.v3.csv"]["validation"])
+        self.assertEqual(set(r["_source_file"] for r in snapshot["outcomes"]), {"outcomes.csv", "outcomes.v3.csv"})

@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import shutil
 import sys
 from pathlib import Path
 
@@ -42,7 +43,7 @@ WORKBOOK = Path(__file__).parent / "ftse_structure_live.xlsx"
 COLUMNS = ["signal_day", "recorded_at", "ticker", "company", "index", "impulse_low", "impulse_high", "pullback_low",
            "depth", "stop", "target_measured", "fill_day", "fill", "target_2x",
            "exit_day_measured", "exit_measured", "result_measured", "net_measured",
-           "exit_day_2x", "exit_2x", "result_2x", "net_2x"]
+           "exit_day_2x", "exit_2x", "result_2x", "net_2x", "recording"]
 
 
 def read_trades(folder: Path) -> pd.DataFrame:
@@ -67,7 +68,14 @@ def exit_for(frame: pd.DataFrame, fill_n: int, stop: float, target: float) -> tu
     """(exit day, price, result) once known from completed daily candles; None while still open."""
     o, h, l, c = (frame[k].to_numpy() for k in ("open", "high", "low", "close"))
     last = fill_n - 1 + st.MAX_HOLD                              # 60 trading days after the signal day
+    expected = frame.index[fill_n]
     for k in range(fill_n, min(last, len(frame) - 1) + 1):
+        if frame.index[k] != expected:
+            return None
+        values = (o[k], h[k], l[k], c[k])
+        if not all(math.isfinite(v) and v > 0 for v in values) or l[k] > min(o[k], c[k]) or h[k] < max(o[k], c[k]):
+            return None
+        expected = calendar().next_session(expected)
         if l[k] <= stop:
             return frame.index[k], min(o[k], stop), "Stopped out"
         if h[k] >= target:
@@ -77,59 +85,37 @@ def exit_for(frame: pd.DataFrame, fill_n: int, stop: float, target: float) -> tu
     return None
 
 
-def step(trades: pd.DataFrame, data: dict[str, pd.DataFrame], names: dict, indexes: dict, checked_through: str | None,
-         today: pd.Timestamp, now_text: str) -> tuple[pd.DataFrame, str | None]:
-    """Record new signals for days after `checked_through` up to `today`, fill and resolve trades."""
-    trades = trades.copy()
-    for column in COLUMNS:
-        if column not in trades.columns:
-            trades[column] = None
-        trades[column] = trades[column].astype(object)
-    start = max(pd.Timestamp(FIRST_SIGNAL_DAY), pd.Timestamp(checked_through) + pd.Timedelta(days=1)) \
-        if checked_through else pd.Timestamp(FIRST_SIGNAL_DAY)
-    newest_checked = checked_through
-    new_rows = []
-    for ticker, frame in data.items():
-        if frame.empty:
-            continue
-        frame = frame[frame.index <= today]
-        for s in st.signals(frame):
-            day = frame.index[s["t"]]
-            if day < start:
-                continue
-            open_here = trades[(trades["ticker"] == ticker)].apply(is_open, axis=1).any() if len(trades) else False
-            if open_here or any(r["ticker"] == ticker for r in new_rows):
-                continue
-            new_rows.append({"signal_day": str(day.date()), "recorded_at": now_text, "ticker": ticker,
-                             "company": names.get(ticker, ticker), "index": indexes.get(ticker, ""),
-                             "impulse_low": round(s["L"], 4), "impulse_high": round(s["H"], 4),
-                             "pullback_low": round(s["P"], 4), "depth": round(s["depth"], 3),
-                             "stop": round(s["stop"], 4), "target_measured": round(s["target"], 4)})
-        if len(frame):
-            last = str(frame.index[-1].date())
-            newest_checked = max(newest_checked or last, last)
-    if new_rows:
-        new = pd.DataFrame(new_rows).reindex(columns=COLUMNS).astype(object)
-        trades = new if trades.empty else pd.concat([trades, new], ignore_index=True)
-
+def resolve_trades(trades: pd.DataFrame, data: dict[str, pd.DataFrame], today: pd.Timestamp) -> None:
+    """Resolve only recorded positions, preserving already final results."""
     for i, row in trades.iterrows():
+        if not is_open(row):
+            continue
         frame = data.get(row["ticker"])
         if frame is None or frame.empty:
             continue
-        frame = frame[frame.index <= today]
+        frame = frame[frame.index <= today].sort_index()
+        frame = frame[~frame.index.duplicated(keep="last")]
+        frame = frame[frame.index.isin(calendar().sessions)]
         signal = pd.Timestamp(row["signal_day"])
         if not isinstance(row["fill_day"], str) or not row["fill_day"]:
             later = frame[frame.index > signal]
             if later.empty:
                 continue                                          # waiting for the next morning
+            expected = calendar().next_session(signal)
+            if later.index[0] != expected:
+                continue  # the actual next session is missing; never fill at a later open
             fill = float(later["open"].iloc[0])
-            if not (math.isfinite(fill) and float(row["stop"]) < fill < float(row["target_measured"])):
+            if not math.isfinite(fill) or fill <= 0:
+                continue
+            if not float(row["stop"]) < fill < float(row["target_measured"]):
                 trades.loc[i, ["fill_day", "fill", "result_measured", "result_2x"]] = [
                     str(later.index[0].date()), round(fill, 4), "Skipped: opened past stop or target",
                     "Skipped: opened past stop or target"]
                 continue
             trades.loc[i, ["fill_day", "fill", "target_2x"]] = [
                 str(later.index[0].date()), round(fill, 4), round(fill + 2 * (fill - float(row["stop"])), 4)]
+        if pd.Timestamp(trades.at[i, "fill_day"]) not in frame.index:
+            continue
         fill_n = frame.index.get_loc(pd.Timestamp(trades.at[i, "fill_day"]))
         fill = float(trades.at[i, "fill"])
         for label, target in (("measured", float(trades.at[i, "target_measured"])), ("2x", float(trades.at[i, "target_2x"]))):
@@ -141,7 +127,81 @@ def step(trades: pd.DataFrame, data: dict[str, pd.DataFrame], names: dict, index
                 gross = (price - fill) / fill * STAKE
                 trades.loc[i, [f"exit_day_{label}", f"exit_{label}", f"result_{label}", f"net_{label}"]] = [
                     str(day.date()), round(price, 4), result, round(gross - COSTS, 2)]
-    return trades, newest_checked
+
+
+def open_on(row: pd.Series, day: pd.Timestamp) -> bool:
+    """Whether a recorded decision occupied this share at the end of a given day."""
+    if pd.Timestamp(row["signal_day"]) > day:
+        return False
+    for label in ("measured", "2x"):
+        result = row.get(f"result_{label}")
+        end = row.get("fill_day") if isinstance(result, str) and result.startswith("Skipped") else row.get(f"exit_day_{label}")
+        if not isinstance(end, str) or not end or pd.Timestamp(end) > day:
+            return True
+    return False
+
+
+def step(trades: pd.DataFrame, data: dict[str, pd.DataFrame], names: dict, indexes: dict,
+         checked_through: dict[str, str] | str | None, today: pd.Timestamp,
+         now_text: str) -> tuple[pd.DataFrame, dict[str, str]]:
+    """Catch up each share in order. A legacy global date is not proof of coverage.
+
+    Existing decisions take precedence over reconstructed signals. A share's
+    progress stops at the first missing or invalid session and resumes on recovery.
+    """
+    trades = trades.copy()
+    for column in COLUMNS:
+        if column not in trades.columns:
+            trades[column] = None
+        trades[column] = trades[column].astype(object)
+    trades["recording"] = trades["recording"].fillna("Recorded before reliability update")
+    checked = dict(checked_through) if isinstance(checked_through, dict) else {}
+    resolve_trades(trades, data, today)
+    for ticker, original in data.items():
+        frame = original[original.index <= today].sort_index()
+        frame = frame[~frame.index.duplicated(keep="last")]
+        if frame.empty:
+            continue
+        start = max(pd.Timestamp(FIRST_SIGNAL_DAY), pd.Timestamp(checked[ticker]) + pd.Timedelta(days=1)) \
+            if ticker in checked else pd.Timestamp(FIRST_SIGNAL_DAY)
+        if start > today:
+            continue
+        last = None
+        for day in calendar().sessions_in_range(start, today):
+            if day not in frame.index:
+                break
+            bar = frame.loc[day]
+            o, h, l, c = (float(bar[k]) for k in ("open", "high", "low", "close"))
+            if not all(math.isfinite(v) and v > 0 for v in (o, h, l, c)) or l > min(o, c) or h < max(o, c):
+                break
+            last = day
+        if last is None:
+            continue
+        visible = frame[frame.index <= last]
+        for signal in st.signals(visible):
+            day = visible.index[signal["t"]]
+            if day < start:
+                continue
+            here = trades[trades["ticker"] == ticker]
+            if (here["signal_day"] == str(day.date())).any() or any(open_on(r, day) for _, r in here.iterrows()):
+                continue
+            row = {"signal_day": str(day.date()), "recorded_at": now_text, "ticker": ticker,
+                   "company": names.get(ticker, ticker), "index": indexes.get(ticker, ""),
+                   "impulse_low": round(signal["L"], 4), "impulse_high": round(signal["H"], 4),
+                   "pullback_low": round(signal["P"], 4), "depth": round(signal["depth"], 3),
+                   "stop": round(signal["stop"], 4), "target_measured": round(signal["target"], 4),
+                   "recording": "Recovered after missing data" if day < today else "Recorded on signal day"}
+            candidate = pd.DataFrame([row]).reindex(columns=COLUMNS).astype(object)
+            resolve_trades(candidate, {ticker: visible}, last)
+            # During migration an old recorded trade may exist after this recovered
+            # signal. Never invent an overlapping position or replace that decision.
+            later = here[here["signal_day"] > str(day.date())]
+            if any(open_on(candidate.iloc[0], pd.Timestamp(d)) for d in later["signal_day"]):
+                print(f"Recovery: {ticker} {day.date()} overlaps a recorded decision; left out.")
+                continue
+            trades = candidate if trades.empty else pd.concat([trades, candidate], ignore_index=True)
+        checked[ticker] = str(last.date())
+    return trades, checked
 
 
 def build_workbook(trades: pd.DataFrame, data: dict, today: pd.Timestamp, now_text: str) -> Workbook:
@@ -152,7 +212,9 @@ def build_workbook(trades: pd.DataFrame, data: dict, today: pd.Timestamp, now_te
     filled = trades[trades["fill"].notna() & ~trades["result_measured"].fillna("").astype(str).str.startswith("Skipped")] \
         if len(trades) else trades
     rows = [("Updated", now_text), ("Prices up to", str(today.date())), ("Started", FIRST_SIGNAL_DAY),
-            ("Signals so far", len(trades)), ("Trades entered", len(filled))]
+            ("Signals so far", len(trades)), ("Trades entered", len(filled)),
+            ("Recovered signals (included in totals)", int(trades["recording"].eq("Recovered after missing data").sum())
+             if "recording" in trades else 0)]
     for label, name in (("measured", "Measured-move target"), ("2x", "2x stop target")):
         closed = filled[filled[f"net_{label}"].notna()] if len(filled) else filled
         total = float(closed[f"net_{label}"].astype(float).sum()) if len(closed) else 0.0
@@ -175,7 +237,7 @@ def build_workbook(trades: pd.DataFrame, data: dict, today: pd.Timestamp, now_te
         "stop": "Stop", "target_measured": "Target (measured move)", "fill_day": "Bought on", "fill": "Entry price",
         "target_2x": "Target (2x stop)", "exit_day_measured": "Exit day (measured)", "exit_measured": "Exit price (measured)",
         "result_measured": "Result (measured)", "net_measured": "After costs, measured (£)", "exit_day_2x": "Exit day (2x)",
-        "exit_2x": "Exit price (2x)", "result_2x": "Result (2x)", "net_2x": "After costs, 2x (£)"})
+        "exit_2x": "Exit price (2x)", "result_2x": "Result (2x)", "net_2x": "After costs, 2x (£)", "recording": "When recorded"})
     log.append(list(shown.columns))
     for _, row in shown.iterrows():
         values = [None if (isinstance(v, float) and not math.isfinite(v)) else v for v in row.tolist()]
@@ -206,13 +268,28 @@ def run(args, now: pd.Timestamp | None = None) -> int:
     folder = Path(args.data_dir)
     folder.mkdir(parents=True, exist_ok=True)
     state = read_state(folder)
-    trades, checked = step(read_trades(folder), data, names, indexes, state.get("checked_through"), today,
+    if state.get("schema_version") != 2:
+        for name in ("trades.csv", "state.json"):
+            source = folder / name
+            backup = source.with_name(source.stem + ".pre-reliability" + source.suffix)
+            if source.exists() and not backup.exists():
+                shutil.copy2(source, backup)
+    trades, checked = step(read_trades(folder), data, names, indexes,
+                           state.get("checked_by_ticker", state.get("checked_through")), today,
                            now.tz_convert(sc.UK_TZ).strftime("%Y-%m-%d %H:%M"))
-    trades.reindex(columns=COLUMNS).to_csv(folder / "trades.csv", index=False)
-    (folder / "state.json").write_text(json.dumps({"checked_through": checked}, indent=2))
+    trade_tmp = folder / "trades.csv.tmp"
+    trades.reindex(columns=COLUMNS).to_csv(trade_tmp, index=False)
+    trade_tmp.replace(folder / "trades.csv")
+    state_tmp = folder / "state.json.tmp"
+    state_tmp.write_text(json.dumps({"schema_version": 2, "checked_by_ticker": checked}, indent=2))
+    state_tmp.replace(folder / "state.json")
     saved = sc.save_workbook(build_workbook(trades, data, today, now.tz_convert(sc.UK_TZ).strftime("%Y-%m-%d %H:%M UK")),
                              Path(args.out))
-    print(f"{len(trades)} paper trade(s) on record; checked up to {checked}. Workbook saved: {saved}")
+    outstanding = [ticker for ticker in names if checked.get(ticker, "") < str(today.date())]
+    if outstanding:
+        print(f"Warning: {len(outstanding)} share(s) still have missing sessions; progress retained for recovery: "
+              + ", ".join(outstanding[:10]))
+    print(f"{len(trades)} paper trade(s) on record; progress saved separately for {len(checked)} shares. Workbook saved: {saved}")
     return 0
 
 

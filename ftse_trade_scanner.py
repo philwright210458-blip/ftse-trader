@@ -15,6 +15,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from ftse_sessions import is_session, session_open_close
+from ftse_execution import interval_minutes, completed_candles, drop_untraded_bars, market_stamp
 
 import pandas as pd
 from openpyxl import Workbook
@@ -164,34 +165,6 @@ def fetch_many(tickers: list[str], interval: str, period: str, chunk: int = 50,
     return result
 
 
-def interval_minutes(interval: str) -> int | None:
-    unit = interval[-1].lower()
-    try:
-        number = int(interval[:-1])
-    except ValueError:
-        return None
-    return number if unit == "m" else number * 60 if unit == "h" else None
-
-
-def completed_candles(df: pd.DataFrame, interval: str, now: pd.Timestamp | None = None) -> pd.DataFrame:
-    """Return completed bars in market time, including single-bar downloads.
-
-    A naive provider index is explicitly interpreted as London market time.
-    Historical bars are retained; forming/future bars are never observations.
-    """
-    result = df.copy()
-    result.index = pd.DatetimeIndex(result.index)
-    result.index = (result.index.tz_localize(UK_TZ) if result.index.tz is None
-                    else result.index.tz_convert(UK_TZ))
-    result = result[~result.index.duplicated(keep="last")].sort_index()
-    minutes = interval_minutes(interval)
-    if minutes is None:
-        return result
-    now = pd.Timestamp.now(tz=UK_TZ) if now is None else pd.Timestamp(now)
-    now = now.tz_localize(UK_TZ) if now.tzinfo is None else now.tz_convert(UK_TZ)
-    return result[result.index + pd.Timedelta(minutes=minutes) <= now].copy()
-
-
 def candle_lag_minutes(df: pd.DataFrame, interval: str) -> float | None:
     """Minutes since the newest candle in the raw download *ended*.
 
@@ -229,15 +202,6 @@ def describe_data_lag(lags: list[float]) -> str:
                 f"than one candle late, so the feed is behind. Check your broker's live price")
     return (f"Data check: newest candle ended about {middle:.0f} min ago. Inconclusive: this looks the same "
             f"for a live feed and a 15-minute-delayed one. Compare the latest price with your broker")
-
-
-def drop_untraded_bars(df: pd.DataFrame) -> pd.DataFrame:
-    """Remove zero-volume candles (no trades). Illiquid names print flat
-    placeholder bars that otherwise create fake swing highs/lows."""
-    if "volume" in df.columns:
-        volume = pd.to_numeric(df["volume"], errors="coerce")
-        return df[volume > 0].copy()
-    return df
 
 
 def typical_true_range(df: pd.DataFrame, length: int = 14) -> float:
@@ -811,7 +775,7 @@ def todays_mock_trades(data_dir: Path, info: "RunInfo", interval: str) -> list[d
             data = drop_untraded_bars(completed_candles(fetch_data(row["ticker"], interval, "5d"), interval))
         except Exception:
             data = None
-        row["progress"] = mock_progress(row, data, interval_minutes(interval) or 15)
+        row["progress"] = mock_progress(row, data, interval_minutes(interval) or 15, now=market_stamp(info.run_time))
     return rows
 
 

@@ -251,8 +251,8 @@ class DecisionsAndStatistics(unittest.TestCase):
         self.assertEqual(result.iloc[0]["key"], "early")
 
     def test_v1_cache_preserved(self):
-        self.assertNotEqual(out.CACHE_FILENAME, "outcomes.csv")
-        self.assertEqual(out.SIMULATION_VERSION, "availability-session-v2")
+        self.assertNotIn(out.CACHE_FILENAME, ("outcomes.csv", "outcomes.v2.csv"))
+        self.assertEqual(out.SIMULATION_VERSION, "availability-session-v3")
 
 
 if __name__ == "__main__":

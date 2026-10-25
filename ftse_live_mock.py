@@ -21,9 +21,12 @@ same candle, dealing costs and stamp duty deducted.
 from __future__ import annotations
 
 import csv
+import math
 from pathlib import Path
 
 import pandas as pd
+
+from ftse_execution import market_stamp, simulate
 
 LIVE_FILENAME = "live_mock_trades.csv"
 LIVE_COLUMNS = ["day", "signal_time", "data_time", "mode", "trade_no", "company", "ticker", "index", "setup",
@@ -107,48 +110,44 @@ def record_live_mock(data_dir: Path, info, candidates, max_per_day: int = DEFAUL
 DEALING_GBP, STAMP_GBP = 0.10, 0.50       # per £100: dealing on every trade, stamp duty on buys
 
 
-MARKET_CLOSE = "16:30"                      # UK; same-day mock trades are closed at the last price before this
+def mock_progress(row: dict, data: pd.DataFrame | None, minutes: int = 15,
+                  now: pd.Timestamp | None = None) -> dict:
+    """Display the shared execution state. Callers supply the observation clock.
 
-
-def mock_progress(row: dict, data: pd.DataFrame | None, minutes: int = 15) -> dict:
-    """Provisional state of one live mock trade from completed candles: open, stopped out, target hit, or
-    closed at the end of the day once the day's last candle (ending 16:30) is in.
-
-    Same rules as the outcome tracker: filled at the open of the first candle that starts after the
-    signal, stop counted first if stop and target fall in the same candle. "At" is the time the candle
-    ended (a 15:30-15:45 candle shows 15:45). The 17:05 outcome run is final."""
+    For callers supplying already-completed candles without a clock, their last
+    candle end is the observation time. Missing coverage keeps the slot occupied.
+    """
     result = {"fill": None, "status": "Waiting for entry candle", "time": "", "price": None,
               "gross": None, "costs": None, "net": None}
     if data is None or data.empty:
         result["status"] = "Price check unavailable"
         return result
-    signal = pd.Timestamp(row["signal_time"])
-    signal = signal.tz_localize(data.index.tz) if signal.tzinfo is None and data.index.tz is not None else signal
-    after = data[data.index >= signal]
-    if after.empty:
+    signal = market_stamp(row["signal_time"])
+    if row.get("data_time"):
+        signal = max(signal, market_stamp(row["data_time"]) + pd.Timedelta(minutes=minutes))
+    observed = market_stamp(now) if now is not None else market_stamp(data.index.max()) + pd.Timedelta(minutes=minutes)
+    sim = simulate(row["direction"], float(row["stop"]), float(row["target"]), signal, data, 1,
+                   observed, f"{minutes}m")
+    if math.isfinite(sim.fill):
+        result["fill"] = round(sim.fill, 2)
+    if sim.status == "skipped":
+        result["status"] = ("Skipped: opened past the stop or target" if sim.outcome == "gap"
+                            else "Skipped: outside entry rules")
         return result
+    if sim.state == "waiting":
+        return result
+    if sim.state == "missing" or sim.status == "nodata":
+        result["status"] = "Price check incomplete"
+        return result
+    if sim.status == "done":
+        result["status"] = {"stop": "Stopped out", "target": "Target hit", "timeout": "Closed at end of day"}[sim.outcome]
+        price, when = sim.exit_price, sim.exit_time
+    else:
+        result["status"] = "Open"
+        price, when = sim.mark_price, sim.observed_at
     long = row["direction"] == "Long"
-    stop, target = float(row["stop"]), float(row["target"])
-    fill = float(after["open"].iloc[0])
-    result["fill"] = round(fill, 2)
-    if (long and (fill <= stop or fill >= target)) or (not long and (fill >= stop or fill <= target)):
-        result["status"] = "Skipped: opened past the stop or target"
-        return result
-    status, price, when = "Open", float(after["close"].iloc[-1]), after.index[-1]
-    for stamp, bar in after.iterrows():
-        o, h, l = float(bar["open"]), float(bar["high"]), float(bar["low"])
-        hit_stop, hit_target = (l <= stop, h >= target) if long else (h >= stop, l <= target)
-        if hit_stop:
-            status, price, when = "Stopped out", (min(o, stop) if long else max(o, stop)), stamp
-            break
-        if hit_target:
-            status, price, when = "Target hit", (max(o, target) if long else min(o, target)), stamp
-            break
-    ended = when + pd.Timedelta(minutes=minutes)
-    if status == "Open" and ended.strftime("%H:%M") >= MARKET_CLOSE:
-        status = "Closed at end of day"
-    gross = ((price - fill) if long else (fill - price)) / fill * 100
+    gross = ((price - sim.fill) if long else (sim.fill - price)) / sim.fill * 100
     costs = DEALING_GBP + (STAMP_GBP if long else 0.0)
-    result.update(status=status, time=ended.strftime("%H:%M"), price=round(price, 2), gross=round(gross, 2),
-                  costs=costs, net=round(gross - costs, 2))
+    result.update(time=market_stamp(when).strftime("%H:%M") if when else "", price=round(price, 2),
+                  gross=round(gross, 2), costs=costs, net=round(gross - costs, 2))
     return result

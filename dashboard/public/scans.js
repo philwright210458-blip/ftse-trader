@@ -119,8 +119,8 @@ function render(s) {
         f.total_rows,
         f.name === "outcomes.csv"
           ? "Legacy outcomes, unverified"
-          : f.name === "outcomes.v2.csv"
-            ? "Scanner outcomes v2; separate model"
+          : ["outcomes.v2.csv", "outcomes.v3.csv"].includes(f.name)
+            ? `Scanner outcomes ${f.name.split(".")[1]}; separate model`
             : "Actual scanner observations",
       ]),
     ),

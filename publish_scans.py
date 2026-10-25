@@ -22,6 +22,7 @@ FILES = {
     "setups.csv": 3000,
     "outcomes.csv": 2000,
     "outcomes.v2.csv": 2000,
+    "outcomes.v3.csv": 2000,
 }
 
 
@@ -43,6 +44,8 @@ def build_snapshot(ref="HEAD", now=None):
     )
     tables, sources = {}, []
     for name, limit in FILES.items():
+        if name == "outcomes.v2.csv" and "scan_data/outcomes.v3.csv" in tree:
+            continue  # preserve v2 in Git, publish only the newest execution version
         location = "scan_data/" + name
         if location not in tree:
             if name in ("runs.csv", "setups.csv"):
@@ -124,8 +127,8 @@ def build_snapshot(ref="HEAD", now=None):
                 "included_rows": len(rows),
                 "truncated": total > len(rows),
                 "validation": (
-                    "corrected-cache-v2; separate scanner model"
-                    if name == "outcomes.v2.csv"
+                    f"corrected-cache-{name.split('.')[1]}; separate scanner model"
+                    if name in ("outcomes.v2.csv", "outcomes.v3.csv")
                     else (
                         "legacy-unverified"
                         if name == "outcomes.csv"
@@ -179,7 +182,7 @@ def build_snapshot(ref="HEAD", now=None):
         },
         "runs": runs,
         "setups": tables["setups.csv"],
-        "outcomes": tables.get("outcomes.csv", []) + tables.get("outcomes.v2.csv", []),
+        "outcomes": tables.get("outcomes.csv", []) + tables.get("outcomes.v3.csv", tables.get("outcomes.v2.csv", [])),
         "limitations": [
             "Actual stored scanner records, not live share quotes.",
             "Publication time is separate from scan time and source candle time.",

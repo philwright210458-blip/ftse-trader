@@ -19,14 +19,14 @@ What it does
 23 Oct 2026; build_picks is kept only for ftse_backtest.py.)
 
 Run it once a day after the close (Yahoo only keeps about 60 days of 15-minute
-candles, so corrected results are cached in scan_data/outcomes.v2.csv):
+candles, so corrected results are cached in scan_data/outcomes.v3.csv):
 
     python ftse_outcomes.py
 
 Assumptions (also written into the workbook's Summary sheet)
   * Fill at the first candle OPEN on or after actual scan availability.
   * Require completed contiguous bars; missing coverage stays unresolved.
-  * Legacy outcomes.csv is preserved; corrected results use outcomes.v2.csv.
+  * Legacy outcomes.csv is preserved; corrected results use outcomes.v3.csv.
   * If the stop and target both fall inside one candle, the stop is assumed
     to have been hit first (pessimistic).
   * Gaps through a stop fill at the open, so a loss can exceed the planned stop amount.
@@ -40,7 +40,6 @@ import argparse
 import math
 import sys
 import time
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -52,14 +51,13 @@ from openpyxl.utils import get_column_letter
 
 import ftse_trade_scanner as sc
 from ftse_live_mock import LIVE_FILENAME, read_live
-from ftse_sessions import is_session, session_open_close, sessions_from
+from ftse_execution import SIMULATION_VERSION, Sim, market_stamp, simulate, daily_value, day_range_misses
 
 SCRIPT_DIR = Path(__file__).parent
 DEFAULT_OUT = SCRIPT_DIR / "ftse_outcomes.xlsx"
 OUTCOME_COLUMNS = ["key", "day", "ticker", "direction", "horizon", "status", "outcome", "fill",
                    "exit_price", "exit_time", "r_gross", "fill_risk_pct", "ambiguous"]
-SIMULATION_VERSION = "availability-session-v2"
-CACHE_FILENAME = "outcomes.v2.csv"
+CACHE_FILENAME = "outcomes.v3.csv"
 
 PICK_SCENARIOS = ["Top 1 per day", "Top 2 per day", "Top 2 per day, persistent"]
 POOL = "Pool average (every first sighting)"
@@ -69,142 +67,6 @@ LIVE = "Live: trades at trigger points"
 # ----------------------------------------------------------------------
 # Simulating one setup
 # ----------------------------------------------------------------------
-
-@dataclass
-class Sim:
-    status: str                 # done | skipped | pending | nodata
-    outcome: str = ""           # target | stop | timeout | gap | no_candle
-    fill: float = float("nan")
-    exit_price: float = float("nan")
-    exit_time: str = ""
-    r_gross: float = float("nan")
-    fill_risk_pct: float = float("nan")
-    ambiguous: bool = False
-
-
-MAX_FILL_DELAY = pd.Timedelta(minutes=30)   # no trade within this long of the signal = not filled
-
-
-def market_stamp(value) -> pd.Timestamp:
-    stamp = pd.Timestamp(value)
-    return stamp.tz_localize(sc.UK_TZ) if stamp.tzinfo is None else stamp.tz_convert(sc.UK_TZ)
-
-
-def simulate(side: str, stop: float, target: float, signal_close: pd.Timestamp,
-             data: pd.DataFrame, horizon: int, now: pd.Timestamp, interval: str = "15m",
-             daily: pd.DataFrame | None = None) -> Sim:
-    """Conservative completed-bar simulation from actual signal availability.
-
-    `signal_close` is the later of the signal candle close and scan availability.
-    Intrabar outcomes become observable at bar close. Gaps in the path keep the
-    outcome unresolved: a later candle cannot establish what happened earlier.
-    Exception (22 Oct 2026): with `daily` prices (date-indexed high/low/close), a
-    missing candle is skipped when that whole day's range never reached the stop
-    or the target, because then nothing can have happened inside the gap.
-    """
-    available, now = market_stamp(signal_close), market_stamp(now)
-    minutes = sc.interval_minutes(interval)
-    if minutes is None or minutes <= 0 or horizon < 1 or side not in {"Long", "Short"}:
-        raise ValueError("Use a positive intraday interval, horizon and valid direction")
-    if not all(math.isfinite(float(v)) and float(v) > 0 for v in (stop, target)):
-        return Sim("skipped", "invalid_levels")
-    if (side == "Long" and stop >= target) or (side == "Short" and stop <= target):
-        return Sim("skipped", "invalid_levels")
-    if not is_session(available):
-        return Sim("skipped", "outside_session")
-    opening, closing = session_open_close(available)
-    if available < opening or available >= closing:
-        return Sim("skipped", "outside_session")
-    step = pd.Timedelta(minutes=minutes)
-    # Anchor intervals to this exchange session, not midnight or a UTC offset.
-    expected_fill = opening + math.ceil((available - opening) / step) * step
-    if expected_fill >= closing:
-        return Sim("skipped", "no_candle")
-    complete = sc.drop_untraded_bars(sc.completed_candles(data, interval, now))
-    after = complete[complete.index >= expected_fill]
-    expired = now - available > pd.Timedelta(days=max(10, horizon * 3 + 4))
-    missing = Sim("nodata", "missing_coverage") if expired else Sim("pending", "missing_coverage")
-    if after.empty:
-        return missing
-    first = after.index[0]
-    if first.date() != available.date() or first - available > MAX_FILL_DELAY:
-        return Sim("skipped", "no_candle")
-    # Unknown bars immediately before a fill cannot establish whether the setup
-    # was still valid, so do not retrospectively fill at a later observed price.
-    if first != expected_fill:
-        return missing
-    fill = float(after["open"].iloc[0])
-    if not math.isfinite(fill) or fill <= 0:
-        return missing
-    if (side == "Long" and (fill <= stop or fill >= target)) or (side == "Short" and (fill >= stop or fill <= target)):
-        return Sim("skipped", "gap", fill=fill)
-    risk = abs(fill - stop)
-    risk_pct = risk / fill * 100
-
-    def r_multiple(price):
-        return round(((price - fill) if side == "Long" else (fill - price)) / risk, 6)
-
-    final_close = closing
-    last_row, last_end = None, None
-    last_slot_missing = False
-    for day in sessions_from(available, horizon):
-        day_open, day_close = session_open_close(day)
-        start = first if day.date() == first.date() else day_open
-        for stamp in pd.date_range(start, day_close, freq=step, inclusive="left"):
-            bar_end = min(stamp + step, day_close)
-            if bar_end > now:
-                return missing
-            if stamp not in complete.index:
-                if not day_range_misses(daily, day, side, stop, target):
-                    return missing
-                last_slot_missing = True
-                continue
-            last_slot_missing = False
-            row = complete.loc[stamp]
-            o, h, l, close = (float(row[c]) for c in ("open", "high", "low", "close"))
-            if not all(math.isfinite(v) and v > 0 for v in (o, h, l, close)) or l > min(o, close) or h < max(o, close):
-                return missing
-            hit_stop, hit_target = (l <= stop, h >= target) if side == "Long" else (h >= stop, l <= target)
-            ambiguous = hit_stop and hit_target
-            if hit_stop:
-                price = min(o, stop) if side == "Long" else max(o, stop)
-                return Sim("done", "stop", fill, price, bar_end.isoformat(), r_multiple(price), risk_pct, ambiguous)
-            if hit_target:
-                price = max(o, target) if side == "Long" else min(o, target)
-                return Sim("done", "target", fill, price, bar_end.isoformat(), r_multiple(price), risk_pct, False)
-            last_row, last_end = row, bar_end
-        final_close = day_close
-    if now < final_close or last_row is None:
-        return missing
-    price, ended = float(last_row["close"]), last_end
-    if last_slot_missing:               # the session's last candle is missing: use the official daily close
-        close = daily_value(daily, final_close, "close")
-        if close is None:
-            return missing
-        price, ended = close, final_close
-    return Sim("done", "timeout", fill, price, ended.isoformat(), r_multiple(price), risk_pct, False)
-
-
-def daily_value(daily: pd.DataFrame | None, day, column: str) -> float | None:
-    if daily is None or daily.empty or column not in daily.columns:
-        return None
-    stamp = pd.Timestamp(day)
-    key = (stamp.tz_convert(sc.UK_TZ).tz_localize(None) if stamp.tzinfo else stamp).normalize()
-    if key not in daily.index:
-        return None
-    value = float(daily.at[key, column])
-    return value if math.isfinite(value) and value > 0 else None
-
-
-def day_range_misses(daily: pd.DataFrame | None, day, side: str, stop: float, target: float) -> bool:
-    """True when the whole day's high and low stayed strictly between the stop and the target."""
-    high, low = daily_value(daily, day, "high"), daily_value(daily, day, "low")
-    if high is None or low is None:
-        return False
-    if side == "Long":
-        return low > stop and high < target
-    return high < stop and low > target
-
 
 def daily_prices(raw: pd.DataFrame) -> pd.DataFrame:
     """Yahoo daily candles indexed by plain date, for day_range_misses."""
@@ -510,7 +372,8 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
              last_col=18, chars_per_line=190, fill=NEUTRAL)
     note_row(live_sheet, 3, f"Each trade is £{args.position_gbp:.0f}. Dealing costs = {args.cost_pct:.2f}% (buy and sell together); stamp duty "
                             f"= {args.stamp_duty_pct:.2f}% on buys of real shares (sells never pay it). Grey rows were never entered or "
-                            "have no result yet.", last_col=18, chars_per_line=190, fill=NEUTRAL)
+                            "have no result yet. Results rechecked with version 3 missing-price safeguards; older totals may differ. "
+                            "Only resolved trades enter the totals.", last_col=18, chars_per_line=190, fill=NEUTRAL)
     header(live_sheet, TOTALS_ROW - 1, ["Net after all fees (£)", "Completed", "Profitable", "Losing", "Flat", "Not resolved / skipped",
                                         "Gross profit / loss (£)", "Dealing costs (£)", "Stamp duty (£)"])
     live_sheet.row_dimensions[TOTALS_ROW - 1].height = 32
@@ -558,8 +421,10 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
                                                 round(-dealing, 2), (round(-stamp, 2) if stamp else 0), round(net, 2), round(running, 2)],
                     fill=GOOD if net > 0 else BAD)
             else:
-                label = {"skipped": ("Skipped (no trade within 30 min)" if r["outcome"] == "no_candle"
-                                     else "Skipped (price already past stop or target)"),
+                label = {"skipped": ({"no_candle": "Skipped (no entry candle before close)",
+                                       "outside_session": "Skipped (outside market hours)",
+                                       "invalid_levels": "Skipped (invalid stop or target)"}.get(
+                                           r["outcome"], "Skipped (price already past stop or target)")),
                          "nodata": "No data"}.get(status, "Not resolved yet")
                 put(live_sheet, number, head + [(round(r["fill"], 2) if pd.notna(r["fill"]) else None),
                                                 round(r["stop"], 2), round(r["target"], 2), label], fill=NEUTRAL)
@@ -650,8 +515,8 @@ def main() -> None:
           f"{len(pool)} first sightings, {len(needed)} to follow up.")
 
     out_path = data_dir / CACHE_FILENAME
-    if (data_dir / "outcomes.csv").exists():
-        print("Original outcomes.csv retained as superseded v1 baseline; corrected results use " + CACHE_FILENAME)
+    if (data_dir / "outcomes.csv").exists() or (data_dir / "outcomes.v2.csv").exists():
+        print("Original v1/v2 outcomes retained; shared execution results use " + CACHE_FILENAME)
     cache = read_outcomes(out_path)
     resolved, pending, failed = evaluate_pending(needed, cache, horizons, args.interval, args.period, args.delay, out_path)
     print(f"Resolved {resolved} new outcome(s); {pending} not resolvable yet (the hold period hasn't finished); {failed} download(s) failed.")

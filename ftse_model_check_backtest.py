@@ -176,7 +176,7 @@ def simulate_one(row, intraday, now) -> dict:
     available = max(signal_close, out.market_stamp(row["run_time"]))
     sim = out.simulate(row["direction"], float(row["stop"]), float(row["target"]), available, data, 1, now, "15m")
     return {"status": sim.status, "outcome": sim.outcome, "fill": sim.fill, "exit_time": sim.exit_time,
-            "r_gross": sim.r_gross, "fill_risk_pct": sim.fill_risk_pct}
+            "r_gross": sim.r_gross, "fill_risk_pct": sim.fill_risk_pct, "observed_at": sim.observed_at}
 
 
 def live_trader(ideas: pd.DataFrame, intraday, now) -> pd.DataFrame:
@@ -186,8 +186,16 @@ def live_trader(ideas: pd.DataFrame, intraday, now) -> pd.DataFrame:
         tickers, trades = set(), []
         for run_time, scan in day.groupby("run_time", sort=True):
             now_scan = out.market_stamp(run_time)
-            still_open = sum(1 for t in trades if t["status"] != "done" or not t["exit_time"]
-                             or pd.Timestamp(t["exit_time"]) > now_scan)
+            # Recheck previous decisions using only candles observable at this scan.
+            # A future gap rejection cannot free a place in the scan that chose it.
+            still_open = 0
+            for previous in trades:
+                progress = simulate_one(previous, intraday, now_scan)
+                closed = (progress["status"] == "done" and progress["exit_time"]
+                          and pd.Timestamp(progress["exit_time"]) <= now_scan)
+                rejected = (progress["status"] == "skipped" and progress.get("observed_at")
+                            and pd.Timestamp(progress["observed_at"]) <= now_scan)
+                still_open += not (closed or rejected)
             slots = min(MAX_OPEN - still_open, MAX_PER_DAY - len(trades))
             for _, row in scan.sort_values("score", ascending=False).iterrows():
                 if slots <= 0:
@@ -195,10 +203,6 @@ def live_trader(ideas: pd.DataFrame, intraday, now) -> pd.DataFrame:
                 if row["ticker"] in tickers:
                     continue
                 result = {**row.to_dict(), **simulate_one(row, intraday, now)}
-                if result["status"] == "skipped":          # never entered: frees the slot straight away
-                    tickers.add(row["ticker"])
-                    taken.append(result)
-                    continue
                 tickers.add(row["ticker"])
                 trades.append(result)
                 taken.append(result)

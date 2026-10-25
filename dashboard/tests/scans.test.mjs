@@ -16,6 +16,18 @@ const snapshot = JSON.parse(
     { cwd: new URL("../../", import.meta.url), encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
   ),
 );
+test("v3 execution archives retain explicit provenance and reject unknown versions", () => {
+  const latest = structuredClone(snapshot);
+  for (const file of latest.source.files) {
+    if (file.name === "outcomes.v2.csv") file.name = "outcomes.v3.csv";
+  }
+  for (const row of latest.outcomes) {
+    if (row._source_file === "outcomes.v2.csv") row._source_file = "outcomes.v3.csv";
+  }
+  assert.equal(validateArchive(latest), null);
+  latest.source.files.find((f) => f.name === "outcomes.v3.csv").name = "outcomes.v4.csv";
+  assert.ok(validateArchive(latest));
+});
 const env = {
   SCANS_WRITE_TOKEN: "a".repeat(64),
   SCANS_TRUST_SITES_DISPATCH: "true",

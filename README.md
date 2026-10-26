@@ -5,6 +5,8 @@ Phil's paper-trading research on FTSE 100 and FTSE 250 shares. **Nothing here pl
 Reliability update: [plain-English notes for Phil](docs/RELIABILITY_NOTES_FOR_PHIL.md),
 including missing-price handling and how to read recovered results. [Technical details and historical impact](docs/RELIABILITY_REVIEW.md).
 
+**Today's progress:** [FTSE Trader Today](https://philwright210458-blip.github.io/ftse-trader/), a web page rebuilt after every scan and the 17:05 results (`ftse_site.py`, workflow `pages.yml`).
+
 ## What runs automatically (Mon-Fri, on GitHub)
 
 The timers are on cron-job.org; each one starts a GitHub workflow.

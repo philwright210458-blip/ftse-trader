@@ -1,0 +1,55 @@
+# FTSE Trader Today page: rebuilds the GitHub Pages site after every Watch scan and the 17:05
+# Outcomes run (see ftse_site.py). It only reads files already in the repo and changes nothing.
+# One-off setup (Phil): repo Settings > Pages > Build and deployment > Source: GitHub Actions.
+
+name: FTSE Trader Today page
+
+on:
+  workflow_run:
+    workflows: [FTSE Watch, FTSE Outcomes]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: ftse-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      # The scans commit their results to main, so build from the newest main, not the triggering commit.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install packages
+        run: pip install -r requirements.txt
+
+      - name: Build the page
+        run: python -u ftse_site.py --out site
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -12,6 +12,11 @@ share closed above its open, a Sell when below; Avoid and no view are not scored
 The morning picker reads the previous trading day's file to see the biggest movers and its own
 scorecard. The scanner does not use it.
 
+Picker paper trader (from 26 Oct 2026): every Buy / Sell view is also a paper trade of £100 bought or
+sold at the 08:00 open and closed at the 16:30 close, after spread-bet costs (0.10% = 10p, no stamp
+duty). Each day's trades are saved to scan_data/picker_trades.csv (a re-run replaces that day's rows),
+so the picker has its own running total next to the scanner's.
+
     python ftse_daily_moves.py            # today (UK)
     python ftse_daily_moves.py --day 2026-10-23
 """
@@ -30,7 +35,10 @@ import ftse_trade_scanner as sc
 from ftse_picker import load_views
 
 COLUMNS = ["day", "ticker", "company", "prev_close", "open", "high", "low", "close", "change_pct",
-           "open_to_close_pct", "picker_view", "picker_right"]
+           "open_to_close_pct", "picker_view", "picker_right", "picker_net_gbp"]
+STAKE, SPREAD_BET_COST_PCT = 100.0, 0.10
+TRADE_COLUMNS = ["day", "ticker", "company", "view", "open", "close", "move_pct", "gross_gbp", "costs_gbp", "net_gbp"]
+TRADES_FILE = "picker_trades.csv"
 
 
 def day_moves(frames: dict[str, pd.DataFrame], names: dict[str, str], day: str,
@@ -54,13 +62,41 @@ def day_moves(frames: dict[str, pd.DataFrame], names: dict[str, str], day: str,
         view = (views or {}).get(ticker.upper(), ("", ""))[0]
         move = c / o - 1
         right = "" if view not in ("Buy", "Sell") or c == o else ("Yes" if (move > 0) == (view == "Buy") else "No")
+        net = (round((move if view == "Buy" else -move) * STAKE - STAKE * SPREAD_BET_COST_PCT / 100, 2)
+               if view in ("Buy", "Sell") else None)
         rows.append({"day": day, "ticker": ticker, "company": names.get(ticker, ticker),
                      "prev_close": round(prev, 4) if math.isfinite(prev) else None, "open": round(o, 4),
                      "high": round(h, 4), "low": round(l, 4), "close": round(c, 4),
                      "change_pct": round((c / prev - 1) * 100, 2) if math.isfinite(prev) and prev > 0 else None,
-                     "open_to_close_pct": round(move * 100, 2), "picker_view": view, "picker_right": right})
+                     "open_to_close_pct": round(move * 100, 2), "picker_view": view, "picker_right": right,
+                     "picker_net_gbp": net})
     table = pd.DataFrame(rows, columns=COLUMNS)
     return table.sort_values("change_pct", ascending=False, na_position="last").reset_index(drop=True)
+
+
+def picker_trades(table: pd.DataFrame) -> pd.DataFrame:
+    """The day's picker paper trades: £100 at the open, closed at the close, after spread-bet costs."""
+    calls = table[table["picker_view"].isin(["Buy", "Sell"])]
+    rows = []
+    for _, r in calls.iterrows():
+        sign = 1 if r["picker_view"] == "Buy" else -1
+        gross = round(sign * (r["close"] / r["open"] - 1) * STAKE, 2)
+        costs = round(STAKE * SPREAD_BET_COST_PCT / 100, 2)
+        rows.append({"day": r["day"], "ticker": r["ticker"], "company": r["company"], "view": r["picker_view"],
+                     "open": r["open"], "close": r["close"], "move_pct": r["open_to_close_pct"],
+                     "gross_gbp": gross, "costs_gbp": costs, "net_gbp": round(gross - costs, 2)})
+    return pd.DataFrame(rows, columns=TRADE_COLUMNS)
+
+
+def save_picker_trades(data_dir: Path, day: str, trades: pd.DataFrame) -> pd.DataFrame:
+    """Replace this day's rows in the running file and return the whole file."""
+    path = Path(data_dir) / TRADES_FILE
+    old = pd.read_csv(path, dtype={"day": str}) if path.exists() and path.stat().st_size else pd.DataFrame(columns=TRADE_COLUMNS)
+    old = old[old["day"] != day]
+    every = trades if old.empty else pd.concat([old, trades], ignore_index=True)
+    every = every.sort_values(["day", "ticker"]).reset_index(drop=True)
+    every.to_csv(path, index=False)
+    return every
 
 
 def main() -> None:
@@ -84,6 +120,11 @@ def main() -> None:
     scored = table[table["picker_right"].isin(["Yes", "No"])]
     score = f"; picker {int((scored['picker_right'] == 'Yes').sum())} of {len(scored)} calls right" if len(scored) else ""
     top, bottom = table.iloc[0], table.dropna(subset=["change_pct"]).iloc[-1]
+    every = save_picker_trades(data_dir, day, picker_trades(table))
+    today = every[every["day"] == day]
+    if len(every):
+        print(f"Picker paper trader: today {len(today)} trade(s), £{today['net_gbp'].sum():+.2f}; "
+              f"since {every['day'].min()} {len(every)} trade(s), £{every['net_gbp'].sum():+.2f} after spread-bet costs.")
     print(f"{day}: {len(table)} FTSE 100 shares saved to {out}. Biggest riser {top['company']} {top['change_pct']:+.1f}%, "
           f"biggest faller {bottom['company']} {bottom['change_pct']:+.1f}%{score}.")
 

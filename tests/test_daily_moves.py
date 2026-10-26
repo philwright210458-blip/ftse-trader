@@ -33,6 +33,25 @@ class DailyMoves(unittest.TestCase):
         table = dm.day_moves(frames, {}, "2026-10-23", None)
         self.assertEqual((table.iloc[0]["picker_view"], table.iloc[0]["picker_right"]), ("", ""))
 
+    def test_picker_paper_trades_and_running_file(self):
+        import tempfile
+        from pathlib import Path
+        frames = {"IAG.L": frame([(300, 301, 299, 300), (300, 310, 299, 308.55)], start="2026-10-23"),
+                  "BP.L": frame([(450, 452, 448, 451), (451, 452, 446, 447.8)], start="2026-10-23"),
+                  "XX.L": frame([(10, 11, 9, 10), (10, 11, 9, 10.5)], start="2026-10-23")}
+        views = {"IAG.L": ("Buy", ""), "BP.L": ("Sell", ""), "XX.L": ("Avoid", "")}
+        table = dm.day_moves(frames, {}, "2026-10-26", views)
+        trades = dm.picker_trades(table)
+        self.assertEqual(sorted(trades["ticker"]), ["BP.L", "IAG.L"])            # Avoid is not traded
+        iag = trades.set_index("ticker").loc["IAG.L"]
+        self.assertEqual((iag["gross_gbp"], iag["costs_gbp"], iag["net_gbp"]), (2.85, 0.1, 2.75))
+        self.assertAlmostEqual(trades.set_index("ticker").loc["BP.L", "net_gbp"], 0.61)
+        self.assertAlmostEqual(table.set_index("ticker").loc["IAG.L", "picker_net_gbp"], 2.75)
+        with tempfile.TemporaryDirectory() as folder:
+            dm.save_picker_trades(Path(folder), "2026-10-26", trades)
+            every = dm.save_picker_trades(Path(folder), "2026-10-26", trades)   # re-run replaces, no duplicates
+            self.assertEqual(len(every), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

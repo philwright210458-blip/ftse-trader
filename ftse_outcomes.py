@@ -371,7 +371,7 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
                             "is filled at the open of the next 15-minute candle. Trades close at the target, the stop, or the end of the day.",
              last_col=18, chars_per_line=190, fill=NEUTRAL)
     note_row(live_sheet, 3, f"Each trade is £{args.position_gbp:.0f}. Dealing costs = {args.cost_pct:.2f}% (buy and sell together); stamp duty "
-                            f"= {args.stamp_duty_pct:.2f}% on buys of real shares (sells never pay it). Grey rows were never entered or "
+                            f"= {args.stamp_duty_pct:.2f}% on buys (0 = spread bet, the basis for all results from 26 Oct 2026, including earlier trades). Grey rows were never entered or "
                             "have no result yet. Results rechecked with version 3 missing-price safeguards; older totals may differ. "
                             "Only resolved trades enter the totals.", last_col=18, chars_per_line=190, fill=NEUTRAL)
     header(live_sheet, TOTALS_ROW - 1, ["Net after all fees (£)", "Completed", "Profitable", "Losing", "Flat", "Not resolved / skipped",
@@ -486,7 +486,7 @@ def main() -> None:
     parser.add_argument("--horizon", type=int, default=1, help="Holding period in trading days (default: 1 = same day)")
     parser.add_argument("--last-entry", default="15:30", help="Ignore setups from scans after this time (default: 15:30)")
     parser.add_argument("--cost-pct", type=float, default=0.10, help="Assumed round-trip cost (spread + slippage) as %% of price (default: 0.10)")
-    parser.add_argument("--stamp-duty-pct", type=float, default=0.5, help="Stamp duty %% on long entries, for the 'if you buy actual shares' column; 0 turns it off (default: 0.5)")
+    parser.add_argument("--stamp-duty-pct", type=float, default=0.0, help="Stamp duty %% on buys of real shares; 0 = spread-bet costs, the default from 26 Oct 2026 (0.5 = share dealing)")
     parser.add_argument("--position-gbp", type=float, default=100.0, help="Pounds put into each mock trade (default: 100)")
     parser.add_argument("--delay", type=float, default=0.3, help="Seconds between downloads (default: 0.3)")
     args = parser.parse_args()

@@ -375,7 +375,9 @@ REJECTION_WICK_SHARE = 0.4         # range: wick on the level's side is at least
 REJECTION_CLOSE_LOCATION = 0.6     # range: close in the top 40% of the candle for buys (bottom 40% for sells)
 # Added 22 Oct 2026 (Phil: only trade at a trigger point that could make a profit):
 MIN_NET_REWARD_RISK = 1.5          # target's gain after costs must be at least 1.5x the stop's loss after costs
-COSTS_PCT = {"Long": 0.60, "Short": 0.10}   # per £100: dealing 0.10% + stamp duty 0.5% on buys
+# Spread-bet costs (Phil, 26 Oct 2026): 0.10% for buys and sells, no stamp duty. Until then buys were
+# charged 0.60% (stamp duty on real shares), which with the target cap left no buy able to pass.
+COSTS_PCT = {"Long": 0.10, "Short": 0.10}
 
 
 # Target cap (Phil, 24 Oct 2026; ideas register 27): a same-day trade's target is brought in to the
@@ -462,11 +464,11 @@ def reclaim_is_fresh(setup: TradeSetup, df: pd.DataFrame) -> bool:
 
 def worth_trading_note(setup: TradeSetup) -> str:
     """Empty if reaching the target would gain at least MIN_NET_REWARD_RISK times what hitting the stop
-    would lose, both after costs (per £100: 60p on buys, 10p on sells)."""
+    would lose, both after costs (per £100: 10p, spread-bet costs from 26 Oct 2026)."""
     entry = setup.entry
     risk = abs(entry - setup.stop) / entry * 100
     reward = abs(setup.target - entry) / entry * 100
-    cost = COSTS_PCT.get(setup.direction, 0.6)
+    cost = COSTS_PCT.get(setup.direction, 0.10)
     net_reward, net_risk = reward - cost, risk + cost
     if net_risk <= 0 or net_reward < MIN_NET_REWARD_RISK * net_risk:
         return (f"Not worth it after costs: target would make about £{net_reward:.2f} per £100 against a possible "
@@ -744,7 +746,7 @@ def _write_mock_sheet(ws, rows: list[dict], info: "RunInfo") -> None:
         ws.append(["", "", "No mock trades yet today."])
     _add_note(ws, f"Mock trades made today (up to 5 open at once and 10 a day, one per share, FTSE 100 shares only, only ideas that pass every rule), with progress from completed 15-minute candles up to {info.as_of} UK. "
                   "Provisional: Yahoo prices can be up to 15 minutes behind. The final result is worked out at 17:05 "
-                  "in ftse_outcomes.xlsx (Live Mock Trades sheet). Costs per £100: 10p dealing, plus 50p stamp duty on buys.")
+                  "in ftse_outcomes.xlsx (Live Mock Trades sheet). Costs per £100: 10p (spread bet, no stamp duty).")
 
 
 def build_workbook(info: RunInfo, all_setups: list[TradeSetup], selected: list[TradeSetup],

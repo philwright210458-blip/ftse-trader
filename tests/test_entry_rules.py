@@ -62,9 +62,13 @@ class TriggerRuleTests(unittest.TestCase):
     """22 Oct 2026: fresh reclaims only, and only trades whose target is worth it after costs."""
 
     def test_worth_trading_after_costs(self):
-        # Hammerson-like buy: 0.42% stop, 1.25% target -> 65p gain v £1.02 loss after costs: skipped
+        # Hammerson-like buy: 0.42% stop, 1.25% target. With spread-bet costs (10p, from 26 Oct 2026):
+        # £1.15 gain v 52p loss: kept (with stamp duty it was 65p v £1.02 and skipped).
         buy = sc.TradeSetup("Ham", "H.L", "FTSE 250", "Range", "Long", sc.Zone(346.9, 347.2), 348.0, 346.55, 352.35, "")
-        self.assertIn("Not worth it", sc.worth_trading_note(buy))
+        self.assertEqual(sc.worth_trading_note(buy), "")
+        # 0.8% stop, 1.2% target buy: £1.10 gain v 90p loss is under 1.5x: skipped
+        weak = sc.TradeSetup("W", "W.L", "FTSE 100", "Range", "Long", sc.Zone(99, 100), 100.0, 99.2, 101.2, "")
+        self.assertIn("Not worth it", sc.worth_trading_note(weak))
         # NatWest-like sell: 0.99% stop, 2.97% target -> £2.87 v £1.09: kept
         sell = sc.TradeSetup("Nat", "N.L", "FTSE 100", "Breakout", "Short", sc.Zone(640, 641), 641.0, 647.35, 621.94, "")
         self.assertEqual(sc.worth_trading_note(sell), "")

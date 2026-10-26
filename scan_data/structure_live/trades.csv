@@ -1,1 +1,1 @@
-signal_day,recorded_at,ticker,company,index,impulse_low,impulse_high,pullback_low,depth,stop,target_measured,fill_day,fill,target_2x,exit_day_measured,exit_measured,result_measured,net_measured,exit_day_2x,exit_2x,result_2x,net_2x
+signal_day,recorded_at,ticker,company,index,impulse_low,impulse_high,pullback_low,depth,stop,target_measured,fill_day,fill,target_2x,exit_day_measured,exit_measured,result_measured,net_measured,exit_day_2x,exit_2x,result_2x,net_2x,recording

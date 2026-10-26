@@ -1,16 +1,13 @@
-Yahoo 15-minute data check, 2026-10-21 20:00 UK
+Yahoo 15-minute data check, 2026-10-26 21:21 UK
 
 DOCS.L
-  2026-10-15: 34 candles expected, 32 returned, 1 with zero volume (treated as missing)
-    not returned: 10:15, 11:00
-    zero volume: 09:45
-  2026-10-16: 34 candles expected, 33 returned, 1 with zero volume (treated as missing)
-    not returned: 10:00
-    zero volume: 14:30
-  2026-10-19: 34 candles expected, 31 returned, 0 with zero volume (treated as missing)
-    not returned: 09:00, 10:15, 13:30
   2026-10-20: 34 candles expected, 32 returned, 1 with zero volume (treated as missing)
     not returned: 08:45, 10:45
     zero volume: 11:00
   2026-10-21: 34 candles expected, 33 returned, 0 with zero volume (treated as missing)
     not returned: 10:30
+  2026-10-22: 34 candles expected, 34 returned, 1 with zero volume (treated as missing)
+    zero volume: 08:45
+  2026-10-23: 34 candles expected, 34 returned, 1 with zero volume (treated as missing)
+    zero volume: 14:00
+  2026-10-26: 34 candles expected, 34 returned, 0 with zero volume (treated as missing)

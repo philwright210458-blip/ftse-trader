@@ -107,7 +107,7 @@ def record_live_mock(data_dir: Path, info, candidates, max_per_day: int = DEFAUL
 # Progress during the day (for the "Today's Mock Trades" sheet of the scan workbook)
 # ----------------------------------------------------------------------
 
-DEALING_GBP, STAMP_GBP = 0.10, 0.50       # per £100: dealing on every trade, stamp duty on buys
+DEALING_GBP, STAMP_GBP = 0.10, 0.0        # per £100, spread-bet costs from 26 Oct 2026 (no stamp duty)
 
 
 def mock_progress(row: dict, data: pd.DataFrame | None, minutes: int = 15,

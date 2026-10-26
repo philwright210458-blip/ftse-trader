@@ -65,7 +65,7 @@ class MockProgressTests(unittest.TestCase):
         data = self.candles([(100, 100.2, 99.8, 100), (100.1, 100.6, 99.9, 100.5), (100.5, 101.0, 100.2, 100.8)])
         p = mock_progress(self.trade(), data)
         self.assertEqual((p["fill"], p["status"], p["price"]), (100.1, "Open", 100.8))
-        self.assertAlmostEqual(p["net"], round((100.8 - 100.1) / 100.1 * 100 - 0.6, 2))
+        self.assertAlmostEqual(p["net"], round((100.8 - 100.1) / 100.1 * 100 - 0.1, 2))
 
     def test_stop_counted_first_when_both_hit(self):
         from ftse_live_mock import mock_progress

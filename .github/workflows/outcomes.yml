@@ -56,6 +56,12 @@ jobs:
         continue-on-error: true
         run: python -u ftse_structure_live.py
 
+      # The day's FTSE 100 moves and the morning picker's scorecard (scan_data/daily_moves/<date>.csv),
+      # read by the next morning's picker. Never stops the results above from being saved.
+      - name: Save today's FTSE 100 moves
+        continue-on-error: true
+        run: python -u ftse_daily_moves.py
+
       - name: Save results to the repo
         run: |
           git config user.name "github-actions[bot]"

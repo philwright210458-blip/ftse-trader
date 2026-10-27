@@ -12,6 +12,13 @@ from ftse_sessions import UK_TZ, is_session, session_open_close, sessions_from
 
 SIMULATION_VERSION = "availability-session-v3"
 
+# Fill check (Phil, 27 Oct 2026; ideas register 30): the trade is entered at the next candle's open. If that
+# price has drifted so far towards the stop that less than FILL_CHECK_ROOM of the planned stop distance
+# (signal price to stop) is left, the trade is skipped. Applies to signals from FILL_CHECK_FROM onwards,
+# whenever the caller passes the signal (planned entry) price; backtests that don't pass it are unchanged.
+FILL_CHECK_ROOM = 0.5
+FILL_CHECK_FROM = "2026-10-28"
+
 
 def interval_minutes(interval: str) -> int | None:
     if not interval:
@@ -74,7 +81,7 @@ def market_stamp(value) -> pd.Timestamp:
 
 def simulate(side: str, stop: float, target: float, signal_close: pd.Timestamp,
              data: pd.DataFrame, horizon: int, now: pd.Timestamp, interval: str = "15m",
-             daily: pd.DataFrame | None = None) -> Sim:
+             daily: pd.DataFrame | None = None, planned_entry: float | None = None) -> Sim:
     """Conservative completed-bar simulation from actual signal availability.
 
     `signal_close` is the later of the signal candle close and scan availability.
@@ -124,6 +131,14 @@ def simulate(side: str, stop: float, target: float, signal_close: pd.Timestamp,
         return missing
     if (side == "Long" and (fill <= stop or fill >= target)) or (side == "Short" and (fill >= stop or fill <= target)):
         return Sim("skipped", "gap", fill=fill, observed_at=min(first + step, closing).isoformat())
+    try:
+        planned = float(planned_entry) if planned_entry is not None and str(planned_entry).strip() else None
+    except (TypeError, ValueError):
+        planned = None
+    if (planned is not None and math.isfinite(planned) and available.date().isoformat() >= FILL_CHECK_FROM
+            and abs(fill - stop) < FILL_CHECK_ROOM * abs(planned - stop)):
+        # The open is known as the candle starts, so the place is freed at the fill time.
+        return Sim("skipped", "thin_stop", fill=fill, observed_at=first.isoformat())
     risk = abs(fill - stop)
     risk_pct = risk / fill * 100
 

@@ -126,13 +126,14 @@ def mock_progress(row: dict, data: pd.DataFrame | None, minutes: int = 15,
     if row.get("data_time"):
         signal = max(signal, market_stamp(row["data_time"]) + pd.Timedelta(minutes=minutes))
     observed = market_stamp(now) if now is not None else market_stamp(data.index.max()) + pd.Timedelta(minutes=minutes)
+    planned = float(row["entry"]) if str(row.get("entry", "")).strip() else None
     sim = simulate(row["direction"], float(row["stop"]), float(row["target"]), signal, data, 1,
-                   observed, f"{minutes}m")
+                   observed, f"{minutes}m", planned_entry=planned)
     if math.isfinite(sim.fill):
         result["fill"] = round(sim.fill, 2)
     if sim.status == "skipped":
-        result["status"] = ("Skipped: opened past the stop or target" if sim.outcome == "gap"
-                            else "Skipped: outside entry rules")
+        result["status"] = {"gap": "Skipped: opened past the stop or target",
+                            "thin_stop": "Skipped: stop too close at entry"}.get(sim.outcome, "Skipped: outside entry rules")
         return result
     if sim.state == "waiting":
         return result

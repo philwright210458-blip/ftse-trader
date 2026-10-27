@@ -746,7 +746,7 @@ def _write_mock_sheet(ws, rows: list[dict], info: "RunInfo") -> None:
         ws.append(["", "", "No mock trades yet today."])
     _add_note(ws, f"Mock trades made today (up to 5 open at once and 10 a day, one per share, FTSE 100 shares only, only ideas that pass every rule), with progress from completed 15-minute candles up to {info.as_of} UK. "
                   "Provisional: Yahoo prices can be up to 15 minutes behind. The final result is worked out at 17:05 "
-                  "in ftse_outcomes.xlsx (Live Mock Trades sheet). Costs per £100: 10p (spread bet, no stamp duty).")
+                  "in ftse_outcomes.xlsx (Live Mock Trades sheet). Costs per £100: 10p (spread bet, no stamp duty). From 28 Oct 2026 a trade is skipped if the entry price leaves less than half the planned room to the stop.")
 
 
 def build_workbook(info: RunInfo, all_setups: list[TradeSetup], selected: list[TradeSetup],

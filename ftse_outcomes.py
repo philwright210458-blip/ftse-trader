@@ -181,7 +181,7 @@ def evaluate_pending(rows: pd.DataFrame, cache: pd.DataFrame, horizons: list[int
             signal_close = market_stamp(row["data_time"]) + pd.Timedelta(minutes=minutes)
             available = max(signal_close, market_stamp(row["run_time"]))
             sim = simulate(row["direction"], row["stop"], row["target"], available, data, horizon, now, interval,
-                           daily=daily)
+                           daily=daily, planned_entry=row.get("entry"))
             if sim.status == "pending":
                 pending += 1
                 continue
@@ -423,7 +423,8 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
             else:
                 label = {"skipped": ({"no_candle": "Skipped (no entry candle before close)",
                                        "outside_session": "Skipped (outside market hours)",
-                                       "invalid_levels": "Skipped (invalid stop or target)"}.get(
+                                       "invalid_levels": "Skipped (invalid stop or target)",
+                                       "thin_stop": "Skipped (stop too close at entry)"}.get(
                                            r["outcome"], "Skipped (price already past stop or target)")),
                          "nodata": "No data"}.get(status, "Not resolved yet")
                 put(live_sheet, number, head + [(round(r["fill"], 2) if pd.notna(r["fill"]) else None),

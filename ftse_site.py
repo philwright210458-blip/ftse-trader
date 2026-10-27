@@ -163,7 +163,7 @@ def status_tag(status: str) -> str:
     s = status or ""
     kind = ("won" if s.startswith("Target") else "lost" if s.startswith("Stopped") else
             "flat" if s.startswith(("Closed", "Skipped")) else "open")
-    short = "Skipped (never entered)" if s.startswith("Skipped") else s
+    short = ("Skipped (stop too close)" if "too close" in s else "Skipped (never entered)") if s.startswith("Skipped") else s
     return f'<span class="tag {kind}">{esc(short or "Waiting")}</span>'
 
 

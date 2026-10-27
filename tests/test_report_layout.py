@@ -32,9 +32,10 @@ class ReportTests(unittest.TestCase):
             self.assertNotIn(gone, text)
 
     def test_totals_count_net_pounds(self):
-        row = [self.live.cell(out.TOTALS_ROW, c).value for c in range(1, 10)]
-        net, done, won, lost, flat, waiting, gross, dealing, stamp = row
-        self.assertEqual((done, won, lost, flat, waiting), (4, 1, 2, 1, 3))
+        row = [self.live.cell(out.TOTALS_ROW, c).value for c in range(1, 9)]
+        net, done, won, lost, flat, gross, dealing, stamp = row
+        self.assertEqual((done, won, lost, flat), (4, 1, 2, 1))
+        self.assertIsNone(self.live.cell(out.TOTALS_ROW, 9).value)            # no "not resolved / skipped" column
         self.assertAlmostEqual(gross, 2.7)
         self.assertAlmostEqual(dealing, -0.4)
         self.assertAlmostEqual(stamp, -1.5)
@@ -44,8 +45,10 @@ class ReportTests(unittest.TestCase):
         net = self.live.cell(out.TOTALS_ROW, 1).value
         self.assertEqual([self.live.cell(out.TRADES_HEADER_ROW, c).value for c in (11, 17)], ["Result", "Net after all fees (£)"])
         rows = list(self.trade_rows(self.live))
-        self.assertEqual(len(rows), 7)
-        for col, total_col in ((14, 7), (15, 8), (16, 9), (17, 1)):
+        self.assertEqual(len(rows), 4)                                       # completed trades only
+        results = {self.live.cell(r, 11).value for r in rows}
+        self.assertFalse(any(str(v).startswith(("Skipped", "Not resolved", "No data")) for v in results))
+        for col, total_col in ((14, 6), (15, 7), (16, 8), (17, 1)):
             self.assertAlmostEqual(sum(float(self.live.cell(r, col).value or 0) for r in rows),
                                    self.live.cell(out.TOTALS_ROW, total_col).value)
         daily = self.book["Daily"]
@@ -58,7 +61,7 @@ class ReportTests(unittest.TestCase):
         self.assertAlmostEqual(avg - every_avg, diff, places=2)
 
     def test_money_formats_and_no_risk_multiples(self):
-        for col in (1, 7, 8, 9):
+        for col in (1, 6, 7, 8):
             self.assertEqual(self.live.cell(out.TOTALS_ROW, col).number_format, MONEY)
         self.assertEqual(self.live.cell(out.TRADES_HEADER_ROW + 1, 17).number_format, MONEY)
         self.assertEqual(self.book["Daily"].cell(2, 2).number_format, MONEY)
@@ -85,7 +88,7 @@ class ReportTests(unittest.TestCase):
         book = out.build_report(self.args, self.pool, self.pool, self.picks, self.results, {}, "SYNTHETIC PENDING")
         live = book["Live Mock Trades"]
         self.assertEqual(live.cell(out.TOTALS_ROW, 1).value, "Awaiting results")
-        self.assertEqual(live.cell(out.TOTALS_ROW, 6).value, 7)
+        self.assertEqual(live.max_row, out.TRADES_HEADER_ROW)                 # nothing completed, nothing listed
 
     def test_empty_states(self):
         empty = pd.DataFrame(columns=self.pool.columns)

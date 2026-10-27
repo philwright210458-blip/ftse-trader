@@ -371,19 +371,19 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
                             "is filled at the open of the next 15-minute candle. Trades close at the target, the stop, or the end of the day.",
              last_col=18, chars_per_line=190, fill=NEUTRAL)
     note_row(live_sheet, 3, f"Each trade is £{args.position_gbp:.0f}. Dealing costs = {args.cost_pct:.2f}% (buy and sell together); stamp duty "
-                            f"= {args.stamp_duty_pct:.2f}% on buys (0 = spread bet, the basis for all results from 26 Oct 2026, including earlier trades). Grey rows were never entered or "
-                            "have no result yet. Results rechecked with version 3 missing-price safeguards; older totals may differ. "
+                            f"= {args.stamp_duty_pct:.2f}% on buys (0 = spread bet, the basis for all results from 26 Oct 2026, including earlier trades). Only completed trades are listed: "
+                            "skipped trades and those without a result yet are left out. Results rechecked with version 3 missing-price safeguards; older totals may differ. "
                             "Only resolved trades enter the totals.", last_col=18, chars_per_line=190, fill=NEUTRAL)
-    header(live_sheet, TOTALS_ROW - 1, ["Net after all fees (£)", "Completed", "Profitable", "Losing", "Flat", "Not resolved / skipped",
+    header(live_sheet, TOTALS_ROW - 1, ["Net after all fees (£)", "Completed", "Profitable", "Losing", "Flat",
                                         "Gross profit / loss (£)", "Dealing costs (£)", "Stamp duty (£)"])
     live_sheet.row_dimensions[TOTALS_ROW - 1].height = 32
     profits, losses = int((cash["net_gbp"] > 1e-9).sum()), int((cash["net_gbp"] < -1e-9).sum())
     if done or chosen.empty:
-        put(live_sheet, TOTALS_ROW, [round(float(cash["net_gbp"].sum()), 2), done, profits, losses, done - profits - losses, waiting,
+        put(live_sheet, TOTALS_ROW, [round(float(cash["net_gbp"].sum()), 2), done, profits, losses, done - profits - losses,
                                      round(float(cash["gross_gbp"].sum()), 2), round(-float(cash["dealing_gbp"].sum()), 2),
                                      round(-float(cash["stamp_gbp"].sum()), 2)], bold=True)
     else:
-        put(live_sheet, TOTALS_ROW, ["Awaiting results", 0, 0, 0, 0, waiting, "Awaiting results", "Awaiting results", "Awaiting results"],
+        put(live_sheet, TOTALS_ROW, ["Awaiting results", 0, 0, 0, 0, "Awaiting results", "Awaiting results", "Awaiting results"],
             bold=True)
 
     # ---------------- One comparison line ----------------
@@ -409,6 +409,9 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
         joined = realised_order(add_costs(joined, args.cost_pct, args.stamp_duty_pct))
         flows = cash_flows(joined)
         running = 0.0
+        # Completed trades only (Phil, 27 Oct 2026): skipped and not-yet-resolved trades are left out;
+        # a trade appears here once its result is known.
+        joined = joined[joined["status"] == "done"]
         for number, (idx, r) in enumerate(joined.iterrows(), TRADES_HEADER_ROW + 1):
             status = r["status"] if isinstance(r["status"], str) else "pending"
             head = [r["day"], str(r["run_time"])[11:16], int(r["rank"]), r["company"], r["ticker"], r["direction"], r["setup"]]
@@ -459,7 +462,7 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
     put(daily, len(all_days) + 4, [f"Each trade is £{args.position_gbp:.0f}, after dealing costs and stamp duty."])
 
     # ---------------- Money formats ----------------
-    for col in (1, 7, 8, 9):
+    for col in (1, 6, 7, 8):
         live_sheet.cell(TOTALS_ROW, col).number_format = MONEY_FORMAT
     for col in (3, 5, 6):
         live_sheet.cell(COMPARE_ROW, col).number_format = MONEY_FORMAT

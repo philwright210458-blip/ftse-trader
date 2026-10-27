@@ -100,7 +100,10 @@ class MockProgressTests(unittest.TestCase):
         ws = book["Today's Mock Trades"]
         self.assertIn("watch scan, data to 10:30 UK", ws.cell(1, 1).value)
         self.assertIn("Mock trades made today", ws.cell(2, 1).value)
-        self.assertEqual([ws.cell(4, c).value for c in (3, 5, 6, 10, 15)], ["Alpha plc", "Reclaim", "Buy", "Target hit", 2.3])
+        self.assertEqual([ws.cell(4, c).value for c in (3, 5, 6, 11, 16)], ["Alpha plc", "Reclaim", "Buy", "Target hit", 2.3])
+        self.assertEqual(ws.cell(3, 10).value, "Stop %")
+        self.assertAlmostEqual(ws.cell(4, 10).value, round((100.1 - 99.0) / 100.1 * 100, 2))   # room at the entry price
+        self.assertLessEqual(max(ws.column_dimensions[c].width for c in "ABCDEFGHIJKLMNOP"), 22)
 
     def test_open_trade_closes_at_end_of_day(self):
         from ftse_live_mock import mock_progress
@@ -130,7 +133,7 @@ class MockProgressTests(unittest.TestCase):
             from openpyxl import load_workbook
             ws = load_workbook(folder / "s.xlsx")["Today's Mock Trades"]
             self.assertIn("after the market close", ws.cell(1, 1).value)
-            self.assertEqual(ws.cell(4, 10).value, "Closed at end of day")
+            self.assertEqual(ws.cell(4, 11).value, "Closed at end of day")
             other = pd.Timestamp("2026-10-22 17:05", tz=sc.UK_TZ).to_pydatetime()
             (folder / "s.xlsx").unlink()
             self.assertEqual(sc.refresh_mock_workbook(folder, folder / "s.xlsx", "15m", other), 0)

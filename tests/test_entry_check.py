@@ -32,6 +32,12 @@ class FillCheck(unittest.TestCase):
                 self.assertEqual(pd.Timestamp(r["observed_at"]), pd.Timestamp("2026-10-27 08:45", tz=TZ))
             self.assertEqual(ec.simulate_checked(row, {}, now, None)["status"], "done")
 
+    def test_minimum_room_adds_to_the_fill_check(self):
+        check = ec.room_at_least(0.7)
+        self.assertTrue(check({"stop_pct": 0.8}, {"fill_risk_pct": 0.75}))
+        self.assertFalse(check({"stop_pct": 0.8}, {"fill_risk_pct": 0.65}))       # under 0.7%
+        self.assertFalse(check({"stop_pct": 2.0}, {"fill_risk_pct": 0.9}))        # under half the planned room
+
     def test_check_thresholds(self):
         self.assertTrue(ec.half_left({"stop_pct": 0.44}, {"fill_risk_pct": 0.23}))
         self.assertFalse(ec.half_left({"stop_pct": 0.44}, {"fill_risk_pct": 0.21}))

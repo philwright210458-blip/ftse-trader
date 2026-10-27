@@ -12,6 +12,12 @@ on:
         description: "Only the first N shares (leave blank for all)"
         required: false
         default: ""
+      test:
+        description: "fill = fill check and trend filter; min-stop = minimum room to the stop at entry"
+        required: false
+        default: "fill"
+        type: choice
+        options: [fill, min-stop]
 
 permissions:
   contents: write
@@ -40,16 +46,19 @@ jobs:
       - name: Run backtest
         env:
           LIMIT: ${{ inputs.limit }}
+          TEST: ${{ inputs.test }}
         run: |
           EXTRA=""
           if [ -n "$LIMIT" ]; then EXTRA="--limit $LIMIT"; fi
-          python -u ftse_entry_check_backtest.py $EXTRA --out results/ftse_entry_check.xlsx
+          if [ "$TEST" = "min-stop" ]; then OUT=results/ftse_min_stop.xlsx; else TEST=fill; OUT=results/ftse_entry_check.xlsx; fi
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+          python -u ftse_entry_check_backtest.py $EXTRA --test "$TEST" --out "$OUT"
 
       - name: Save results to the repo
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
-          git add results/ftse_entry_check.xlsx
+          git add "$OUT"
           if git diff --cached --quiet; then echo "Nothing new to save."; exit 0; fi
           git commit -m "Entry check backtest $(TZ=Europe/London date '+%Y-%m-%d %H:%M')"
           for attempt in 1 2 3; do

@@ -56,6 +56,19 @@ def two_tenths_left(row, result) -> bool:
     return result["fill_risk_pct"] >= 0.2
 
 
+def room_at_least(pct: float):
+    """Fill check (half the planned room) and at least `pct`% room to the stop at the entry price."""
+    def check(row, result) -> bool:
+        return half_left(row, result) and result["fill_risk_pct"] >= pct
+    check.__name__ = f"room_at_least_{pct}"
+    return check
+
+
+MIN_STOP_VARIANTS = ["A. Live rules from 28 Oct (fill check, half)", "B. + at least 0.5% room at entry",
+                     "C. + at least 0.6% room at entry", "D. + at least 0.7% room at entry",
+                     "E. + at least 0.8% room at entry"]
+
+
 def simulate_checked(row, intraday, now, check) -> dict:
     """The live simulation, plus the fill check: a trade whose stop is too close at the fill is never entered."""
     result = mc.simulate_one(row, intraday, now)
@@ -155,8 +168,12 @@ def run(args) -> int:
     days = sorted(ideas["day"].unique())
     split = days[len(days) // 2]
     now = pd.Timestamp.now(tz=sc.UK_TZ)
-    plans = [(VARIANTS[0], ideas, None), (VARIANTS[1], ideas, half_left), (VARIANTS[2], ideas, two_tenths_left),
-             (VARIANTS[3], ideas[trend], None), (VARIANTS[4], ideas[trend], half_left), (VARIANTS[5], ideas[trend], two_tenths_left)]
+    if args.test == "min-stop":
+        plans = [(MIN_STOP_VARIANTS[0], ideas, half_left)] + [
+            (name, ideas, room_at_least(pct)) for name, pct in zip(MIN_STOP_VARIANTS[1:], (0.5, 0.6, 0.7, 0.8))]
+    else:
+        plans = [(VARIANTS[0], ideas, None), (VARIANTS[1], ideas, half_left), (VARIANTS[2], ideas, two_tenths_left),
+                 (VARIANTS[3], ideas[trend], None), (VARIANTS[4], ideas[trend], half_left), (VARIANTS[5], ideas[trend], two_tenths_left)]
     rows, frames = [], []
     for name, chosen, check in plans:
         trades = live_trader(chosen, intraday, now, check) if not chosen.empty else pd.DataFrame()
@@ -173,7 +190,12 @@ def run(args) -> int:
     bt.note(ws, 2, f"Generated {datetime.now(sc.UK_TZ):%Y-%m-%d %H:%M} UK time. FTSE 100 shares, {days[0]} to {days[-1]} "
                    f"({len(days)} trading days). Every 15-minute scan 08:30-15:15 with the live rules (target cap, spread-bet "
                    "costs of 0.10%), up to 5 trades open at once and 10 a day, £100 a trade, closed by the end of the day.")
-    bt.note(ws, 3, "Fill check: at the actual entry price (the next candle's open) the trade is skipped if too little is left "
+    if args.test == "min-stop":
+        bt.note(ws, 3, "Minimum room test (27 Oct): all variants use the live fill check (skip if less than half the planned "
+                       "room to the stop is left at the entry price); B-E also skip trades with less than 0.5% / 0.6% / 0.7% / "
+                       "0.8% room to the stop at the entry price.")
+    else:
+        bt.note(ws, 3, "Fill check: at the actual entry price (the next candle's open) the trade is skipped if too little is left "
                    "to the stop: less than half the planned distance (B), or less than 0.2% (C). Daily trend: buys only "
                    "above the 50-day average close, sells only below (D).")
     bt.note(ws, 4, "Compare on 'Profit per £1 at risk'. About 48 trading days of one market period: treat differences as "
@@ -209,6 +231,8 @@ def main() -> None:
     parser.add_argument("--warmup-days", type=int, default=12)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--workers", type=int, default=os.cpu_count() or 2)
+    parser.add_argument("--test", choices=["fill", "min-stop"], default="fill",
+                        help="fill: fill check and trend filter (27 Oct); min-stop: minimum room to the stop at entry")
     parser.add_argument("--out", default="results/ftse_entry_check.xlsx")
     sys.exit(run(parser.parse_args()))
 

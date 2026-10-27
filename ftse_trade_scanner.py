@@ -719,23 +719,32 @@ def _add_note(ws, text: str) -> None:
     ws.cell(1, 1).font = Font(name="Arial", italic=True, size=9)
 
 
-MOCK_HEADERS = ["#", "Signal time", "Company", "Ticker", "Setup", "Direction", "Entry (filled)", "Stop", "Target",
-                "Status so far", "At", "Latest or exit price", "Before costs per £100 (£)", "Costs (£)",
-                "After costs per £100 (£)"]
+# Short headings so the sheet fits a laptop screen without sideways scrolling (Phil, 27 Oct 2026).
+MOCK_HEADERS = ["#", "Time", "Share", "Ticker", "Setup", "Trade", "Entry", "Stop", "Target", "Stop %",
+                "Status", "At", "Price", "Before £", "Costs £", "After £"]
+MOCK_WIDTHS = {1: 4, 2: 7, 3: 20, 4: 9, 5: 8, 6: 6, 7: 9, 8: 9, 9: 9, 10: 7, 11: 22, 12: 6, 13: 9, 14: 9, 15: 8, 16: 9}
 
 
 def _write_mock_sheet(ws, rows: list[dict], info: "RunInfo") -> None:
     """Today's live mock trades with their progress so far, so they stay visible after they leave Top Trades."""
-    _style_header(ws, MOCK_HEADERS, {1: 5, 2: 11, 3: 30, 4: 10})
+    _style_header(ws, MOCK_HEADERS, MOCK_WIDTHS)
+    for cell in ws[ws.max_row]:
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
     money = '"£"#,##0.00;[Red]-"£"#,##0.00'
     for row in rows:
         p = row.get("progress", {})
+        stop = float(row["stop"])
+        base = p.get("fill") or (float(row["entry"]) if str(row.get("entry", "")).strip() else None)
+        # base: the entry price, or the planned (signal) price until the trade has filled
+        stop_pct = round(abs(base - stop) / base * 100, 2) if base else None
         ws.append([int(row["trade_no"]), str(row["signal_time"])[11:16], row["company"], row["ticker"],
                    "Reclaim" if row["setup"] == "Breakout" else row["setup"],
-                   "Buy" if row["direction"] == "Long" else "Sell", p.get("fill"), float(row["stop"]),
-                   float(row["target"]), p.get("status", ""), p.get("time", ""), p.get("price"), p.get("gross"),
+                   "Buy" if row["direction"] == "Long" else "Sell", p.get("fill"), stop,
+                   float(row["target"]), stop_pct, p.get("status", ""), p.get("time", ""), p.get("price"), p.get("gross"),
                    p.get("costs"), p.get("net")])
-        for column in (13, 14, 15):
+        ws.cell(ws.max_row, 10).number_format = '0.00"%"'
+        ws.cell(ws.max_row, 11).alignment = Alignment(wrap_text=True, vertical="top")
+        for column in (14, 15, 16):
             ws.cell(ws.max_row, column).number_format = money
         status = p.get("status", "")
         colour = "D9EAD3" if status == "Target hit" else "F4CCCC" if status == "Stopped out" else None

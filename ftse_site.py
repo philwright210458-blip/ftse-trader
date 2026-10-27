@@ -68,7 +68,10 @@ def scan_today(path: Path) -> dict:
     header_at = next((i for i, r in enumerate(rows) if r and r[0] == "#"), None)
     if header_at is None:
         return result
-    header = list(rows[header_at])
+    # Short headings since 27 Oct 2026, mapped back to the names this page uses.
+    aliases = {"Time": "Signal time", "Share": "Company", "Trade": "Direction", "Status": "Status so far",
+               "After £": "After costs per £100 (£)"}
+    header = [aliases.get(h, h) for h in rows[header_at]]
     for r in rows[header_at + 1:]:
         if not r or r[0] in (None, ""):
             continue
@@ -232,13 +235,14 @@ def build(root: Path, now: datetime | None = None) -> str:
         net = t.get("After costs per £100 (£)")
         rows.append(f"""<tr><td class="num">{esc(t.get('Signal time'))}</td><td>{esc(t.get('Company'))}</td>
 <td><span class="side {esc(side)}">{esc(side)}</span> <span class="stamp">{esc(t.get('Setup'))}</span></td>
+<td class="num">{f"{t['Stop %']:.2f}%" if isinstance(t.get('Stop %'), (int, float)) else '–'}</td>
 <td>{status_tag(str(t.get('Status so far') or ''))} <span class="stamp">{esc(t.get('At'))}</span></td>
 <td class="num {tone(net if isinstance(net, (int, float)) else None)}">{money(net) if isinstance(net, (int, float)) else '–'}</td>
 <td>{esc(label)}</td></tr>""")
-    body = "".join(rows) or '<tr><td colspan="6">No trades yet today. The scanner trades only when an idea passes every rule.</td></tr>'
+    body = "".join(rows) or '<tr><td colspan="7">No trades yet today. The scanner trades only when an idea passes every rule.</td></tr>'
     out.append(f"""<section class="panel"><h2>Today's trades</h2>
 <p>£100 each, paper only. Progress from completed 15-minute candles; Yahoo prices can be up to 15 minutes behind. The final result is worked out at 17:05.</p>
-<div class="scroll"><table><thead><tr><th class="num">Signal</th><th>Share</th><th>Trade</th><th>Status</th><th class="num">After costs</th><th>Picker</th></tr></thead>
+<div class="scroll"><table><thead><tr><th class="num">Signal</th><th>Share</th><th>Trade</th><th class="num">Stop</th><th>Status</th><th class="num">After costs</th><th>Picker</th></tr></thead>
 <tbody>{body}</tbody></table></div></section>""")
 
     # Picker views and yesterday's movers

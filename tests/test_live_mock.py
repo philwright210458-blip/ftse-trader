@@ -171,6 +171,19 @@ class MockProgressTests(unittest.TestCase):
                                                            "Skipped: opened past the stop or target", "Stopped out")]
         self.assertEqual(live.skipped_at_entry(statuses), 2)
 
+    def test_a_skipped_share_can_be_tried_again(self):
+        self.dir = Path(tempfile.mkdtemp())
+        live.record_live_mock(self.dir, info("2026-10-19 10:47:00"), [setup("WTB.L", 90), setup("A.L", 80)], 10, max_open=0)
+        rows = live.record_live_mock(self.dir, info("2026-10-19 11:47:00"), [setup("WTB.L", 99), setup("A.L", 98)], 10,
+                                     max_open=0, not_entered=1, skipped_tickers=["WTB.L"])
+        self.assertEqual([r["ticker"] for r in rows], ["WTB.L"])          # A.L was entered, so not again
+        again = live.record_live_mock(self.dir, info("2026-10-19 12:47:00"), [setup("WTB.L", 99)], 10,
+                                      max_open=0, not_entered=1, skipped_tickers=["WTB.L"])
+        self.assertEqual(again, [])                                        # the retry was entered: once a day
+        progress = [{"ticker": "WTB.L", "progress": {"status": "Skipped: stop too close at entry"}},
+                    {"ticker": "A.L", "progress": {"status": "Open"}}]
+        self.assertEqual(live.skipped_tickers(progress), ["WTB.L"])
+
     def test_still_open_counts_unknown_as_open(self):
         rows = [{"progress": {"status": s}} for s in ("Open", "Stopped out", "Target hit", "Closed at end of day",
                                                        "Skipped: opened past the stop or target", "Waiting for entry candle",

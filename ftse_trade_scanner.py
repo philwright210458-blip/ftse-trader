@@ -1000,12 +1000,12 @@ def main() -> None:
         from ftse_live_mock import record_live_mock
         live_candidates = [s for s in selected if not s.conflict
                            and (not args.live_index or s.index_label == args.live_index)]
-        from ftse_live_mock import skipped_at_entry, still_open
+        from ftse_live_mock import skipped_at_entry, skipped_tickers, still_open
         progress_now = todays_mock_trades(data_dir, info, args.interval)
         open_now = still_open(progress_now) if args.live_max_open > 0 else 0
         live_rows = record_live_mock(data_dir, info, live_candidates, args.live_max_per_day,
                                      max_per_scan=args.live_max_per_scan, max_open=args.live_max_open, open_now=open_now,
-                                     not_entered=skipped_at_entry(progress_now))
+                                     not_entered=skipped_at_entry(progress_now), skipped_tickers=skipped_tickers(progress_now))
     runs = _read_table(data_dir / "runs.csv", RUN_COLUMNS)
     setups_history = _read_table(data_dir / "setups.csv", SETUP_COLUMNS)
     mock_rows = todays_mock_trades(data_dir, info, args.interval)

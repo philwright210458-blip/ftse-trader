@@ -48,6 +48,12 @@ def read_live(path: Path) -> pd.DataFrame:
     return pd.read_csv(path, dtype=str, keep_default_na=False)
 
 
+def skipped_tickers(progress_rows: list[dict]) -> list[str]:
+    """Tickers of today's trades that were never entered (one entry per skipped trade)."""
+    return [str(row.get("ticker", "")) for row in progress_rows
+            if str(row.get("progress", {}).get("status", "")).startswith("Skipped")]
+
+
 def skipped_at_entry(progress_rows: list[dict]) -> int:
     """How many of today's trades were never entered (opened past the stop, or stop too close at entry)."""
     return sum(str(row.get("progress", {}).get("status", "")).startswith("Skipped") for row in progress_rows)
@@ -60,7 +66,8 @@ def still_open(progress_rows: list[dict]) -> int:
 
 def record_live_mock(data_dir: Path, info, candidates, max_per_day: int = DEFAULT_MAX_PER_DAY,
                      last_entry: str = DEFAULT_LAST_ENTRY, max_per_scan: int | None = None,
-                     max_open: int | None = None, open_now: int = 0, not_entered: int = 0) -> list[dict]:
+                     max_open: int | None = None, open_now: int = 0, not_entered: int = 0,
+                     skipped_tickers: list[str] | None = None) -> list[dict]:
     """Enter new live mock trades from this scan. Returns the rows added.
 
     `info` is the scanner's RunInfo; `candidates` are this scan's non-conflicting
@@ -81,7 +88,10 @@ def record_live_mock(data_dir: Path, info, candidates, max_per_day: int = DEFAUL
         slots = min(slots, max_per_scan)        # spread the day's trades over different scans
     if slots <= 0:
         return []
-    taken = set(today["ticker"])
+    # One trade per share per day, but a share whose earlier trade was skipped at entry (never entered) may be
+    # tried again later the same day (Phil, 28 Oct 2026).
+    skipped = list(skipped_tickers or [])
+    taken = {t for t in set(today["ticker"]) if (today["ticker"] == t).sum() > skipped.count(t)}
     data_time = info.data_time.isoformat()
     rows = []
     # Ideas the morning picker agrees with go first (from 26 Oct 2026), then by quality score.

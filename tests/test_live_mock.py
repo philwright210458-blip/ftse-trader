@@ -96,13 +96,15 @@ class MockProgressTests(unittest.TestCase):
                             "costs": 0.6, "net": 2.3}}
         book = sc.build_workbook(info, [], [], [], pd.DataFrame(columns=sc.SETUP_COLUMNS),
                                  pd.DataFrame(columns=sc.RUN_COLUMNS), {}, [row])
-        self.assertEqual(book.sheetnames, ["Today's Mock Trades"])
+        self.assertEqual(book.sheetnames, ["Today's Mock Trades", "Notes"])   # explanations on their own tab (28 Oct)
         ws = book["Today's Mock Trades"]
-        self.assertIn("watch scan, data to 10:30 UK", ws.cell(1, 1).value)
-        self.assertIn("Mock trades made today", ws.cell(2, 1).value)
-        self.assertEqual([ws.cell(4, c).value for c in (3, 5, 6, 11, 16)], ["Alpha plc", "Reclaim", "Buy", "Target hit", 2.3])
-        self.assertEqual(ws.cell(3, 10).value, "Stop %")
-        self.assertAlmostEqual(ws.cell(4, 10).value, round((100.1 - 99.0) / 100.1 * 100, 2))   # room at the entry price
+        self.assertIn("prices to 10:30", ws.cell(1, 1).value)
+        self.assertLess(len(ws.cell(1, 1).value), 110)                         # one short status line
+        self.assertEqual(ws.freeze_panes, "A3")
+        self.assertIn("Mock trades made today", book["Notes"].cell(2, 2).value)
+        self.assertEqual([ws.cell(3, c).value for c in (3, 5, 6, 11, 16)], ["Alpha plc", "Reclaim", "Buy", "Target hit", 2.3])
+        self.assertEqual(ws.cell(2, 10).value, "Stop %")
+        self.assertAlmostEqual(ws.cell(3, 10).value, round((100.1 - 99.0) / 100.1 * 100, 2))   # room at the entry price
         self.assertLessEqual(max(ws.column_dimensions[c].width for c in "ABCDEFGHIJKLMNOP"), 22)
 
     def test_stop_pct_is_negative_when_the_price_opened_past_the_stop(self):
@@ -114,7 +116,7 @@ class MockProgressTests(unittest.TestCase):
                "progress": {"fill": 2606.0, "status": "Skipped: opened past the stop or target"}}
         book = sc.build_workbook(info, [], [], [], pd.DataFrame(columns=sc.SETUP_COLUMNS),
                                  pd.DataFrame(columns=sc.RUN_COLUMNS), {}, [row])
-        self.assertAlmostEqual(book.active.cell(4, 10).value, round((2602.5 - 2606.0) / 2606.0 * 100, 2))
+        self.assertAlmostEqual(book.active.cell(3, 10).value, round((2602.5 - 2606.0) / 2606.0 * 100, 2))
 
     def test_open_trade_closes_at_end_of_day(self):
         from ftse_live_mock import mock_progress
@@ -143,8 +145,8 @@ class MockProgressTests(unittest.TestCase):
                 self.assertEqual(sc.refresh_mock_workbook(folder, folder / "s.xlsx", "15m", now), 0)
             from openpyxl import load_workbook
             ws = load_workbook(folder / "s.xlsx")["Today's Mock Trades"]
-            self.assertIn("after the market close", ws.cell(1, 1).value)
-            self.assertEqual(ws.cell(4, 11).value, "Closed at end of day")
+            self.assertIn("after the close", ws.cell(1, 1).value)
+            self.assertEqual(ws.cell(3, 11).value, "Closed at end of day")
             other = pd.Timestamp("2026-10-22 17:05", tz=sc.UK_TZ).to_pydatetime()
             (folder / "s.xlsx").unlink()
             self.assertEqual(sc.refresh_mock_workbook(folder, folder / "s.xlsx", "15m", other), 0)

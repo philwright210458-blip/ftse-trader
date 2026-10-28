@@ -755,9 +755,25 @@ def _write_mock_sheet(ws, rows: list[dict], info: "RunInfo") -> None:
                 cell.fill = PatternFill("solid", fgColor=colour)
     if not rows:
         ws.append(["", "", "No mock trades yet today."])
-    _add_note(ws, f"Mock trades made today (up to 5 open at once and 10 a day, one per share, FTSE 100 shares only, only ideas that pass every rule), with progress from completed 15-minute candles up to {info.as_of} UK. "
-                  "Provisional: Yahoo prices can be up to 15 minutes behind. The final result is worked out at 17:05 "
-                  "in ftse_outcomes.xlsx (Live Mock Trades sheet). Costs per £100: 10p (spread bet, no stamp duty). From 28 Oct 2026 a trade is skipped if the entry price leaves less than half the planned room to the stop.")
+
+
+MOCK_NOTES = [
+    ("What this shows", "Mock trades made today (paper only): up to 5 open at once and 10 a day (skipped trades don't count), "
+     "one per share (a share skipped at entry can be tried again), FTSE 100 shares only, only ideas that pass every rule."),
+    ("Progress", "Worked out from completed 15-minute candles up to the time in row 1. Provisional: Yahoo prices can be up to "
+     "15 minutes behind. The final result is worked out at 17:05 in ftse_outcomes.xlsx (Live Mock Trades sheet)."),
+    ("Costs", "Per £100 trade: 10p (spread bet, no stamp duty)."),
+    ("Skips", "From 28 Oct 2026 a trade is skipped if the entry price leaves less than half the planned room to the stop."),
+    ("Stop %", "Room between the entry price and the stop, as a % of the entry price (negative = already past the stop)."),
+]
+
+
+def _write_notes_sheet(ws) -> None:
+    _style_header(ws, ["Topic", "Explanation"], {1: 18, 2: 100})
+    for topic, text in MOCK_NOTES:
+        ws.append([topic, text])
+        ws.cell(ws.max_row, 1).font = Font(name="Arial", bold=True)
+        ws.cell(ws.max_row, 2).alignment = Alignment(wrap_text=True, vertical="top")
 
 
 def build_workbook(info: RunInfo, all_setups: list[TradeSetup], selected: list[TradeSetup],
@@ -769,12 +785,13 @@ def build_workbook(info: RunInfo, all_setups: list[TradeSetup], selected: list[T
     mocks = workbook.active
     mocks.title = "Today's Mock Trades"
     _write_mock_sheet(mocks, mock_rows or [], info)
+    # One short status line on top (Phil, 28 Oct 2026); the explanations are on the Notes sheet.
     if info.mode == "close":
-        _add_note(mocks, f"{report_timestamp()} | final check after the market close (16:30): open trades are closed at the last price")
+        _add_note(mocks, f"{report_timestamp()} | after the close: open trades closed at the last price | see Notes tab")
     else:
-        _add_note(mocks, f"{report_timestamp()} | {info.mode} scan, data to {info.as_of} UK | {len(ranked)} idea(s) found this scan"
-                         + (f" | {info.data_check}" if info.data_check else ""))
-    mocks.freeze_panes = "A4"                          # two note rows, then the column headings
+        _add_note(mocks, f"{report_timestamp()} | prices to {info.as_of} | {len(ranked)} idea(s) this scan | see Notes tab")
+    mocks.freeze_panes = "A3"                          # status line, then the column headings
+    _write_notes_sheet(workbook.create_sheet("Notes"))
     return workbook
 
 

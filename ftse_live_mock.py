@@ -48,6 +48,11 @@ def read_live(path: Path) -> pd.DataFrame:
     return pd.read_csv(path, dtype=str, keep_default_na=False)
 
 
+def skipped_at_entry(progress_rows: list[dict]) -> int:
+    """How many of today's trades were never entered (opened past the stop, or stop too close at entry)."""
+    return sum(str(row.get("progress", {}).get("status", "")).startswith("Skipped") for row in progress_rows)
+
+
 def still_open(progress_rows: list[dict]) -> int:
     """How many of today's trades are still open (or can't be checked, which counts as open to be safe)."""
     return sum(not str(row.get("progress", {}).get("status", "")).startswith(CLOSED_STATUSES) for row in progress_rows)
@@ -55,7 +60,7 @@ def still_open(progress_rows: list[dict]) -> int:
 
 def record_live_mock(data_dir: Path, info, candidates, max_per_day: int = DEFAULT_MAX_PER_DAY,
                      last_entry: str = DEFAULT_LAST_ENTRY, max_per_scan: int | None = None,
-                     max_open: int | None = None, open_now: int = 0) -> list[dict]:
+                     max_open: int | None = None, open_now: int = 0, not_entered: int = 0) -> list[dict]:
     """Enter new live mock trades from this scan. Returns the rows added.
 
     `info` is the scanner's RunInfo; `candidates` are this scan's non-conflicting
@@ -68,7 +73,8 @@ def record_live_mock(data_dir: Path, info, candidates, max_per_day: int = DEFAUL
     path = Path(data_dir) / LIVE_FILENAME
     existing = read_live(path)
     today = existing[existing["day"] == info.day]
-    slots = max_per_day - len(today)
+    # Trades that were skipped at entry (never entered) don't count towards the daily limit (Phil, 28 Oct 2026).
+    slots = max_per_day - (len(today) - not_entered)
     if max_open is not None and max_open > 0:
         slots = min(slots, max_open - open_now)  # a closed trade frees its slot
     if max_per_scan is not None and max_per_scan > 0:

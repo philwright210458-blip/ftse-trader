@@ -159,6 +159,18 @@ class MockProgressTests(unittest.TestCase):
                                      10, max_open=5, open_now=0)
         self.assertEqual([r["ticker"] for r in rows], ["X.L"])
 
+    def test_skipped_trades_do_not_use_up_the_daily_limit(self):
+        self.dir = Path(tempfile.mkdtemp())
+        live.record_live_mock(self.dir, info("2026-10-19 10:18:00"), [setup(f"S{n}.L", 90 - n) for n in range(10)], 10, max_open=0)
+        none_left = live.record_live_mock(self.dir, info("2026-10-19 11:03:00"), [setup("X.L", 99)], 10, max_open=0)
+        self.assertEqual(none_left, [])
+        rows = live.record_live_mock(self.dir, info("2026-10-19 11:18:00"), [setup("X.L", 99), setup("Y.L", 98),
+                                     setup("Z.L", 97)], 10, max_open=0, not_entered=2)   # 2 of the 10 were skipped
+        self.assertEqual([r["ticker"] for r in rows], ["X.L", "Y.L"])
+        statuses = [{"progress": {"status": s}} for s in ("Skipped: stop too close at entry", "Open",
+                                                           "Skipped: opened past the stop or target", "Stopped out")]
+        self.assertEqual(live.skipped_at_entry(statuses), 2)
+
     def test_still_open_counts_unknown_as_open(self):
         rows = [{"progress": {"status": s}} for s in ("Open", "Stopped out", "Target hit", "Closed at end of day",
                                                        "Skipped: opened past the stop or target", "Waiting for entry candle",

@@ -736,7 +736,9 @@ def _write_mock_sheet(ws, rows: list[dict], info: "RunInfo") -> None:
         stop = float(row["stop"])
         base = p.get("fill") or (float(row["entry"]) if str(row.get("entry", "")).strip() else None)
         # base: the entry price, or the planned (signal) price until the trade has filled
-        stop_pct = round(abs(base - stop) / base * 100, 2) if base else None
+        # Room to the stop, signed: negative when the price had already gone past the stop (trade skipped).
+        room = (base - stop) if row["direction"] == "Long" else (stop - base)
+        stop_pct = round(room / base * 100, 2) if base else None
         ws.append([int(row["trade_no"]), str(row["signal_time"])[11:16], row["company"], row["ticker"],
                    "Reclaim" if row["setup"] == "Breakout" else row["setup"],
                    "Buy" if row["direction"] == "Long" else "Sell", p.get("fill"), stop,

@@ -13,10 +13,10 @@ The timers are on cron-job.org; each one starts a GitHub workflow.
 
 | Time (UK) | Workflow | What it does | Results |
 | --- | --- | --- | --- |
-| 08:15 | FTSE Full Scan (`full_scan.yml`) | Scans every share for range and reclaim setups | `ftse_scan_latest.xlsx` (one sheet: Today's Mock Trades), `scan_data/` (every setup found) |
+| 08:15 | FTSE Full Scan (`full_scan.yml`) | Scans every share for range and reclaim setups | `ftse_scan_latest.xlsx` (sheet Today's Mock Trades, plus a Notes tab), `scan_data/` (every setup found) |
 | 07:06 | Morning picker (Claude scheduled task, not a GitHub workflow) | Reads overnight news and market mood; writes up to 10 FTSE 100 shares marked Buy or Sell, plus any to Avoid, to `scan_data/picker/<date>.csv`. From 26 Oct 2026 the scanner only labels ideas with the picker's view (agrees / opposes / avoid / no view); trades are unchanged until the research has been measured (`--picker filter` would let it skip and prioritise ideas, `--picker off` ignores it) | `scan_data/picker/` |
 | 08:31, then every 15 min to 15:31 | FTSE Watch (`watch.yml`) | Scans every share again; live mock trades (FTSE 100 shares only) at trigger points: every idea that passes the rules is taken, up to 5 open at once (a closed trade frees its slot), 10 a day, one per share | `ftse_scan_latest.xlsx`, `scan_data/live_mock_trades.csv` |
-| 17:05 | FTSE Outcomes (`outcomes.yml`) | Scores the live mock trades (sheet **Live Mock Trades**: totals, a comparison with every idea, and each trade; sheet **Daily**: running balance chart); also runs the momentum and structure paper traders | `ftse_outcomes.xlsx`, `ftse_momentum_live.xlsx`, `ftse_structure_live.xlsx` |
+| 17:05 | FTSE Outcomes (`outcomes.yml`) | Scores the live mock trades (sheet **Live Mock Trades**: one totals row with the comparison with every idea, then each completed trade from row 5; sheet **Daily**: running balance chart; sheet **Notes**: explanations); also runs the momentum and structure paper traders | `ftse_outcomes.xlsx`, `ftse_momentum_live.xlsx`, `ftse_structure_live.xlsx` |
 | after each scan | Publish scans (`publish_scans.yml`) | Sends scan results to the shared dashboard | (dashboard) |
 
 Workflows run by hand from the Actions tab: **FTSE Backtest**, **FTSE Range v2 Backtest** and **FTSE Momentum Backtest**. They save their workbooks in `results/`.

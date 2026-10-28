@@ -64,7 +64,7 @@ def scan_today(path: Path) -> dict:
     found = re.search(r"(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})", first)
     if found:
         result["day"], result["generated"] = found.group(1), f"{found.group(1)} {found.group(2)}"
-    result["status_line"] = first.split("|", 1)[1].strip() if "|" in first else ""
+    result["status_line"] = first.split("|", 1)[1].replace("| see Notes tab", "").strip() if "|" in first else ""
     header_at = next((i for i, r in enumerate(rows) if r and r[0] == "#"), None)
     if header_at is None:
         return result
@@ -95,10 +95,10 @@ def scanner_total(path: Path) -> dict | None:
     ws = load_workbook(path, read_only=True, data_only=True)["Live Mock Trades"]
     rows = list(ws.iter_rows(min_row=1, max_row=12, values_only=True))
     for i, r in enumerate(rows[:-1]):
-        if r and r[0] == "Net after all fees (£)":
+        if r and r[0] in ("Net after costs £", "Net after all fees (£)"):
             values = rows[i + 1]
             return {"net": values[0] if isinstance(values[0], (int, float)) else None, "completed": values[1],
-                    "won": values[2], "lost": values[3], "waiting": values[5]}
+                    "won": values[2], "lost": values[3]}
     return None
 
 

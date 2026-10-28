@@ -105,6 +105,17 @@ class MockProgressTests(unittest.TestCase):
         self.assertAlmostEqual(ws.cell(4, 10).value, round((100.1 - 99.0) / 100.1 * 100, 2))   # room at the entry price
         self.assertLessEqual(max(ws.column_dimensions[c].width for c in "ABCDEFGHIJKLMNOP"), 22)
 
+    def test_stop_pct_is_negative_when_the_price_opened_past_the_stop(self):
+        import ftse_trade_scanner as sc
+        info = sc.RunInfo(pd.Timestamp("2026-10-28 08:15", tz=sc.UK_TZ), "08:30", "2026-10-28", "2026-10-28 08:32:20",
+                          "watch", 100, 0)
+        row = {"trade_no": 4, "signal_time": "2026-10-28 08:32:20", "company": "Weir", "ticker": "WEIR.L",
+               "setup": "Range", "direction": "Short", "entry": 2592.0, "stop": 2602.5, "target": 2560.5,
+               "progress": {"fill": 2606.0, "status": "Skipped: opened past the stop or target"}}
+        book = sc.build_workbook(info, [], [], [], pd.DataFrame(columns=sc.SETUP_COLUMNS),
+                                 pd.DataFrame(columns=sc.RUN_COLUMNS), {}, [row])
+        self.assertAlmostEqual(book.active.cell(4, 10).value, round((2602.5 - 2606.0) / 2606.0 * 100, 2))
+
     def test_open_trade_closes_at_end_of_day(self):
         from ftse_live_mock import mock_progress
         index = pd.date_range("2026-10-21 16:00", periods=2, freq="15min", tz="Europe/London")

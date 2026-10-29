@@ -55,11 +55,11 @@ class NoteTradeTests(unittest.TestCase):
     def test_long_with_stop_inside_the_morning_range(self):
         row = tn.note_trade(trade(), outcome(), self.m15, self.daily, pd.Series(dtype=float), pd.DataFrame(), None)
         self.assertEqual(row["fill_time"], "08:45")
-        self.assertEqual(row["stop_inside_range"], "Yes")
-        self.assertEqual(row["trend_15m"], "Flat")
+        self.assertEqual(row["stop_pretested"], "Yes")
+        self.assertEqual(row["ema_state"], "Flat")
         self.assertEqual(row["minutes_held"], 75)
         self.assertAlmostEqual(row["net_gbp"], -2.10)                # -2% then 10p costs
-        self.assertAlmostEqual(row["hold_to_close_gbp"], 2.90)       # daily close 103
+        self.assertAlmostEqual(row["close_outcome_gbp"], 2.90)       # daily close 103
         self.assertEqual(row["picker_view"], "No picker file")
         self.assertEqual(row["daily_trend"], "Down")                 # 100 is not above its own 50-day average
         self.assertEqual(row["trend_4h"], "")                        # not enough 4-hour bars
@@ -70,15 +70,15 @@ class NoteTradeTests(unittest.TestCase):
     def test_stop_not_inside_when_morning_stayed_clear(self):
         row = tn.note_trade(trade(stop=96.0), outcome(exit_price=96.0), self.m15, self.daily,
                             pd.Series(dtype=float), pd.DataFrame(), None)
-        self.assertEqual(row["stop_inside_range"], "No")
+        self.assertEqual(row["stop_pretested"], "No")
 
     def test_short_best_and_worst(self):
         row = tn.note_trade(trade("Short", stop=102.0, target=96.0, entry=100.0),
                             outcome(exit_price=100.0, exit_time="2026-10-29T16:30:00+00:00", result="timeout"),
                             self.m15, self.daily, pd.Series(dtype=float), pd.DataFrame(), {})
-        self.assertAlmostEqual(row["best_pct"], 1.0)                 # lows of 99
-        self.assertAlmostEqual(row["worst_pct"], 1.0)                # highs of 101
-        self.assertAlmostEqual(row["hold_to_close_gbp"], -3.10)
+        self.assertAlmostEqual(row["mfe_pct"], 1.0)                 # lows of 99
+        self.assertAlmostEqual(row["mae_pct"], 1.0)                # highs of 101
+        self.assertAlmostEqual(row["close_outcome_gbp"], -3.10)
         self.assertEqual(row["picker_view"], "No view")
 
     def test_picker_and_flip_flop(self):
@@ -89,9 +89,10 @@ class NoteTradeTests(unittest.TestCase):
             {"ticker": "A.L", "direction": "Long", "run_time": "2026-10-29 08:47:00"}])   # same way
         row = tn.note_trade(trade(), outcome(), self.m15, self.daily, pd.Series(dtype=float), setups,
                             {"A.L": ("Avoid", "Results today")})
-        self.assertEqual(row["opposite_ideas_1h"], 1)
-        self.assertEqual(row["flip_flop"], "Yes")
+        self.assertEqual(row["flip_count_60m"], 1)
+        self.assertEqual(row["regime"], "Sideways")                  # flat and flip-flopping
         self.assertEqual((row["picker_view"], row["picker_reason"]), ("Avoid", "Results today"))
+        self.assertEqual(row["news_day"], "Yes")
 
     def test_up_trend_and_trends_agreeing(self):
         rising = flat_history()
@@ -104,13 +105,88 @@ class NoteTradeTests(unittest.TestCase):
         row = tn.note_trade(trade(stop=level - 3, target=level + 5, entry=level),
                             outcome(fill=level, exit_price=level + 5, result="target"),
                             m15, self.daily, closes, pd.DataFrame(), None)
-        self.assertEqual(row["trend_15m"], "Up")
+        self.assertEqual(row["ema_state"], "Up")
         self.assertEqual(row["trend_4h"], "Up")
         self.assertEqual(row["trends_agreeing"], 2)                  # daily is Down (flat 100s v 50-day average)
 
     def test_missing_candles_give_none(self):
         self.assertIsNone(tn.note_trade(trade(), outcome(), flat_history(), self.daily,
                                         pd.Series(dtype=float), pd.DataFrame(), None))
+
+
+class FeasibilityTests(unittest.TestCase):
+    def setUp(self):
+        today = session(DAY, [100.0] * 34)
+        today.iloc[0, today.columns.get_loc("low")] = 97.0
+        self.m15 = pd.concat([flat_history(), today])
+        self.daily = daily_frame()
+
+    def note(self, t, o, setups=None, views=None, m15=None):
+        return tn.note_trade(t, o, self.m15 if m15 is None else m15, self.daily, pd.Series(dtype=float),
+                             pd.DataFrame() if setups is None else setups, views)
+
+    def setup_row(self, low, high, setup="Breakout", direction="Long"):
+        return pd.DataFrame([{"ticker": "A.L", "direction": direction, "setup": setup,
+                              "run_time": "2026-10-29 08:32:59", "zone_low": low, "zone_high": high}])
+
+    def test_room_band(self):
+        row = self.note(trade(entry=102.0), outcome())            # planned 4.0 away, 2.0 left after the fill
+        self.assertEqual(row["fill_room_pct"], 51)
+        self.assertEqual(row["fill_room_band"], "50-75%")
+        self.assertEqual([tn.room_band(v) for v in (95, 80, 60, 30, None)],
+                         ["90%+", "75-90%", "50-75%", "under 50%", ""])
+
+    def test_breakout_still_past_the_zone(self):
+        row = self.note(trade(), outcome(), self.setup_row(98.5, 99.5))
+        self.assertEqual((row["fill_vs_zone"], row["signal_intact"]), ("Beyond", "Yes"))
+        self.assertAlmostEqual(row["fill_zone_margin_pct"], 0.5)
+        self.assertEqual((row["zone_low"], row["zone_high"]), (98.5, 99.5))
+
+    def test_breakout_back_inside_the_zone(self):
+        row = self.note(trade(), outcome(), self.setup_row(99.5, 100.5))
+        self.assertEqual((row["fill_vs_zone"], row["signal_intact"]), ("Inside", "No"))
+
+    def test_range_inside_is_fine_but_through_is_not(self):
+        ranged = {**trade(), "setup": "Range"}
+        inside = self.note(ranged, outcome(), self.setup_row(99.5, 100.5, "Range"))
+        through = self.note(ranged, outcome(), self.setup_row(100.5, 101.0, "Range"))
+        self.assertEqual(inside["signal_intact"], "Yes")
+        self.assertEqual((through["fill_vs_zone"], through["signal_intact"]), ("Through", "No"))
+
+    def test_short_zone_sides(self):
+        self.assertEqual(tn.zone_position("Short", 99.0, 99.5, 100.0)[0], "Beyond")
+        self.assertEqual(tn.zone_position("Short", 101.0, 99.5, 100.0)[0], "Through")
+        self.assertEqual(tn.zone_position("Long", 100.0, None, None), ("", None))
+
+    def test_no_zone_found(self):
+        row = self.note(trade(), outcome())
+        self.assertEqual((row["fill_vs_zone"], row["signal_intact"]), ("", ""))
+
+    def test_news_day_from_picker_reason(self):
+        self.assertEqual(self.note(trade(), outcome(), views={"A.L": ("Buy", "Strong US lead")})["news_day"], "No")
+        self.assertEqual(self.note(trade(), outcome(), views={"A.L": ("Avoid", "Trading update out")})["news_day"], "Yes")
+        self.assertEqual(self.note(trade(), outcome(), views=None)["news_day"], "")
+
+    def test_regime_labels(self):
+        self.assertEqual(tn.regime_label("Flat", 0, 0.5, -0.3, "Up", "Down"), "Sideways")
+        self.assertEqual(tn.regime_label("Flat", 0, 3.0, -0.3, "Up", "Down"), "Mixed")
+        self.assertEqual(tn.regime_label("Down", 0, 5.0, -7.0, "Up", "Down"), "Trending")
+        self.assertEqual(tn.regime_label("Up", 0, -2.0, -1.5, "Down", "Down"), "Mixed")
+
+    def test_stop_by_a_wick_on_a_volume_spike(self):
+        today = session(DAY, [100.0] * 34)
+        stop_bar = today.index[7]                                    # 09:45
+        today.loc[stop_bar, ["low", "volume"]] = [97.5, 9000.0]       # one print at 97.5, then back to 100
+        m15 = pd.concat([flat_history(), today])
+        row = self.note(trade(), outcome(exit_price=98.0), m15=m15)
+        self.assertIn("stop hit only by a wick that closed back (09:45) on a volume spike (9x)", row["data_quality_flag"])
+
+    def test_extreme_candle_flag(self):
+        today = session(DAY, [100.0] * 34)
+        today.loc[today.index[4], "high"] = 110.0                   # 09:00, 11 points against a normal 2
+        m15 = pd.concat([flat_history(), today])
+        row = self.note(trade(), outcome(exit_price=104.0, result="target"), m15=m15)
+        self.assertIn("extreme wick 09:00", row["data_quality_flag"])
 
 
 class FourHourTests(unittest.TestCase):
@@ -156,6 +232,13 @@ class RunTests(unittest.TestCase):
         tn.run(self.dir, True, self.now, self.fetch)
         self.assertEqual(self.calls, 2)
         self.assertEqual(len(pd.read_csv(self.dir / tn.NOTES_FILE)), 1)
+
+    def test_old_layout_is_rebuilt(self):
+        pd.DataFrame([{"key": "k|Long", "day": DAY, "stop_inside_range": "Yes"}]).to_csv(self.dir / tn.NOTES_FILE, index=False)
+        tn.run(self.dir, False, self.now, self.fetch)
+        notes = pd.read_csv(self.dir / tn.NOTES_FILE)
+        self.assertEqual(list(notes.columns), tn.COLUMNS)
+        self.assertEqual(len(notes), 1)
 
     def test_old_trades_are_out_of_reach(self):
         later = self.now + pd.Timedelta(days=tn.MAX_AGE_DAYS + 1)

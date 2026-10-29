@@ -1,33 +1,34 @@
-"""Trade notes: the trade-autopsy checklist for every completed live mock trade (from 29 Oct 2026).
+"""Trade notes: the trade-autopsy and trade-feasibility checklist for every completed live mock trade.
 
-Phil's trade autopsy of Haleon v Admiral (29 Oct) found ten things worth recording for every trade.
-This script fills them in automatically each evening (FTSE Outcomes workflow, after the outcome
-tracker) so the Friday review and the learning loop can group trades by them once there are 30+.
-It only records; it never changes the scanner, its rules or its trades.
+From 29 Oct 2026 (Phil's trade autopsy of Haleon v Admiral, and the research review that followed).
+Run each evening in the FTSE Outcomes workflow, after the outcome tracker. Each completed trade gets
+one row in scan_data/trade_notes.csv, so the Friday review can group trades by these features.
 
-One row per completed trade in scan_data/trade_notes.csv (trades already noted are kept as they are;
-skipped trades have no fill and are left out). Main columns:
+RECORDED FEATURES ONLY. Nothing here changes the scanner, its rules or its trades. A feature can be
+promoted to a rule only after it holds up on trades it was not chosen from (out-of-sample), with
+Phil's agreement and a backtest.
 
-  1. picker_view, picker_reason ........ the morning picker's label for the share (news / results days)
-  2. gap_pct ............................ the day's open against the previous close, %
-  3. stop_inside_range .................. Yes if the price had already traded at or beyond the stop
-                                          earlier that day, before the entry candle
-  4. planned_stop_pct, fill_stop_pct,
-     stop_room_kept_pct ................. room to the stop as planned, after the fill, and the share kept
-  5. trend_15m (Up / Down / Flat), ema9_sma20_gap_pct, sma20_slope_pct,
-     daily_trend (vs the 50-day average), trend_4h (vs the 4-hour 200 SMA), trends_agreeing (0-3)
-  6. fill_vs_ema9_pct ................... entry price against the 9 EMA, % (+ = above)
-  7. signal_volume_ratio ................ the signal candle's volume / the average of the 20 before it
-  8. target_pct, typical_range_pct,
-     target_vs_typical .................. target distance against the share's typical daily range
-  9. best_pct, worst_pct ................ furthest the trade went for and against us while open, %
-     hold_to_close_gbp .................. what the trade would have made held to the 16:30 close
- 10. opposite_ideas_1h, flip_flop ....... scanner ideas in the other direction on the same share
-                                          within an hour of the signal
+The trade-feasibility bundle (assessed between the signal and the mock entry):
+  fill_room_pct, fill_room_band ...... room to the stop left after the fill, as % of the planned room
+                                       (bands: 90%+, 75-90%, 50-75%, under 50%)
+  stop_pretested ..................... Yes if the price had already traded at or beyond the stop earlier
+                                       that day, before the entry candle
+  target_vs_daily_range .............. target distance / the share's typical daily range
+  signal_intact, fill_vs_zone,
+  fill_zone_margin_pct ............... where the fill sat against the scanner's zone: Beyond (past the
+                                       zone on the trade's side), Inside, or Through (back out the
+                                       wrong side). Breakout: Yes only if Beyond; Range: No if Through
+  regime, ema_state, flip_count_60m .. Sideways / Trending / Mixed (see regime_label)
 
-All indicator values use only candles completed before the entry candle. Money is per £100 after
-spread-bet costs (10p), as in the live mock trades. Yahoo keeps 15-minute candles for about 60 days,
-so a trade older than that cannot be noted.
+Context and results:
+  news_day, picker_view, picker_reason, gap_pct, higher_tf_state (daily 50-day / 4-hour 200 SMA),
+  signal_volume_ratio, mfe_pct / mae_pct (furthest for / against while open), close_outcome_gbp
+  (the result had it been held to the 16:30 close), data_quality_flag (extreme single-candle wicks, a stop
+  hit only by a wick, volume spikes: check against broker data before blaming the strategy).
+
+Indicators use only candles completed before the entry candle. Money is per £100 after spread-bet costs
+(10p), as in the live mock trades. Yahoo keeps 15-minute candles for about 60 days, so older trades
+cannot be noted. Data are Yahoo's, about 15 minutes delayed; volume can be incomplete.
 
     python ftse_trade_notes.py                # note every completed trade not yet noted
     python ftse_trade_notes.py --rebuild      # redo every trade still within Yahoo's 60 days
@@ -37,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -50,23 +52,31 @@ from ftse_picker import load_views
 NOTES_FILE = "trade_notes.csv"
 STAKE, COST_PCT = 100.0, 0.10
 MAX_AGE_DAYS = 55                  # Yahoo keeps 15-minute candles for about 60 days
-FLAT_GAP_PCT = 0.05                # 9 EMA within 0.05% of the 20 SMA = flat (Admiral 29 Oct: 0.02%)
+FLAT_GAP_PCT = 0.05                # 9 EMA within 0.05% of the 20 SMA = flat (Admiral 29 Oct: 0.03%)
 SLOPE_CANDLES = 4                  # slope measured over the last hour of 15-minute candles
 FLIP_WINDOW = pd.Timedelta(minutes=60)
 SMA_4H_BARS = 200
+NEAR_AVERAGE_PCT = 1.0             # within 1% of the daily 50-day and 4-hour 200 SMA = no higher-timeframe trend
+EXTREME_CANDLE = 4.0               # a wick 4x the median candle range of the 20 before entry
+VOLUME_SPIKE = 5.0                 # a candle's volume 5x the average of the 20 before it
+NEWS_WORDS = re.compile(r"result|trading update|update|statement|production|report|profit warning|guidance|"
+                        r"takeover|offer|bid|ex-dividend|agm|capital markets|announcement", re.IGNORECASE)
 
 COLUMNS = [
     "key", "day", "trade_no", "ticker", "company", "setup", "direction", "score", "result", "net_gbp",
     "signal_time", "fill_time", "exit_time", "minutes_held",
-    "planned_entry", "fill", "stop", "target", "exit_price",
-    "picker_view", "picker_reason", "gap_pct", "stop_inside_range",
-    "planned_stop_pct", "fill_stop_pct", "stop_room_kept_pct",
-    "trend_15m", "ema9", "sma20", "ema9_sma20_gap_pct", "sma20_slope_pct",
-    "daily_trend", "daily_vs_sma50_pct", "trend_4h", "vs_4h_sma200_pct", "trends_agreeing",
-    "fill_vs_ema9_pct", "signal_volume_ratio",
-    "target_pct", "typical_range_pct", "target_vs_typical",
-    "best_pct", "worst_pct", "close_1630", "hold_to_close_gbp",
-    "opposite_ideas_1h", "flip_flop", "data_note", "noted_at",
+    "planned_entry", "fill", "stop", "target", "exit_price", "zone_low", "zone_high",
+    # trade feasibility
+    "planned_stop_pct", "fill_stop_pct", "fill_room_pct", "fill_room_band", "stop_pretested",
+    "target_pct", "typical_range_pct", "target_vs_daily_range",
+    "fill_vs_zone", "fill_zone_margin_pct", "signal_intact",
+    "regime", "ema_state", "flip_count_60m",
+    # context
+    "news_day", "picker_view", "picker_reason", "gap_pct",
+    "higher_tf_state", "daily_trend", "daily_vs_sma50_pct", "trend_4h", "vs_4h_sma200_pct", "trends_agreeing",
+    "ema9", "sma20", "ema9_sma20_gap_pct", "sma20_slope_pct", "fill_vs_ema9_pct", "signal_volume_ratio",
+    # what happened
+    "mfe_pct", "mae_pct", "close_1630", "close_outcome_gbp", "data_quality_flag", "noted_at",
 ]
 
 
@@ -77,7 +87,10 @@ def uk(stamp) -> pd.Timestamp:
 
 
 def _r(value, places=2):
-    return round(float(value), places) if value is not None and math.isfinite(float(value)) else None
+    if value is None:
+        return None
+    value = float(value)
+    return round(value, places) if math.isfinite(value) else None
 
 
 def four_hour_closes(hourly: pd.DataFrame) -> pd.Series:
@@ -96,7 +109,7 @@ def four_hour_closes(hourly: pd.DataFrame) -> pd.Series:
     return pd.Series([v for _, v in rows], index=pd.DatetimeIndex([t for t, _ in rows])).sort_index()
 
 
-def daily_by_date(daily: pd.DataFrame) -> pd.DataFrame:
+def daily_by_date(daily: pd.DataFrame | None) -> pd.DataFrame:
     """Daily candles keyed by UK date text."""
     if daily is None or daily.empty:
         return pd.DataFrame(columns=["open", "high", "low", "close"])
@@ -112,15 +125,84 @@ def trend_word(above: bool | None) -> str:
     return "" if above is None else ("Up" if above else "Down")
 
 
+def room_band(pct: float | None) -> str:
+    if pct is None:
+        return ""
+    return "90%+" if pct >= 90 else "75-90%" if pct >= 75 else "50-75%" if pct >= 50 else "under 50%"
+
+
+def zone_position(direction: str, fill: float, low: float | None, high: float | None) -> tuple[str, float | None]:
+    """Beyond / Inside / Through, and the margin past the zone's far edge on the trade's side, % of the fill
+    (negative = not past it)."""
+    if low is None or high is None or not (math.isfinite(low) and math.isfinite(high)):
+        return "", None
+    if direction == "Long":
+        place = "Beyond" if fill > high else "Through" if fill < low else "Inside"
+        return place, (fill - high) / fill * 100
+    place = "Beyond" if fill < low else "Through" if fill > high else "Inside"
+    return place, (low - fill) / fill * 100
+
+
+def signal_intact(setup: str, place: str) -> str:
+    """Breakout (reclaim): the price must still be past the zone. Range: it must not have gone back through it."""
+    if not place:
+        return ""
+    if setup == "Breakout":
+        return "Yes" if place == "Beyond" else "No"
+    return "No" if place == "Through" else "Yes"
+
+
+def regime_label(ema_state: str, flips: int, daily_pct: float | None, h4_pct: float | None,
+                 daily_trend: str, trend_4h: str) -> str:
+    """Sideways: flat 9 EMA / 20 SMA and either the scanner flip-flopped on the share within the hour, or the
+    price sat within 1% of both higher-timeframe averages. Trending: the 15-minute trend agrees with at least
+    one higher timeframe. Mixed: anything else."""
+    near = (daily_pct is not None and h4_pct is not None
+            and abs(daily_pct) < NEAR_AVERAGE_PCT and abs(h4_pct) < NEAR_AVERAGE_PCT)
+    if ema_state == "Flat" and (flips > 0 or near):
+        return "Sideways"
+    if ema_state in ("Up", "Down") and ema_state in (daily_trend, trend_4h):
+        return "Trending"
+    return "Mixed"
+
+
+def quality_flags(direction: str, result: str, stop: float, held: pd.DataFrame, before: pd.DataFrame,
+                  frame: pd.DataFrame, exit_time: pd.Timestamp) -> list[str]:
+    """Things in the candles that may be bad prices or one-off prints rather than the market."""
+    flags = []
+    ranges = (before["high"] - before["low"]).astype(float).tail(20)
+    typical = float(ranges.median()) if len(ranges) else 0.0
+    if typical > 0:
+        for t, bar in held.iterrows():
+            o, h, l, c = (float(bar[k]) for k in ("open", "high", "low", "close"))
+            wick = max(h - max(o, c), min(o, c) - l)
+            if wick >= EXTREME_CANDLE * typical:
+                flags.append(f"extreme wick {t.strftime('%H:%M')} ({wick / typical:.0f}x a normal candle)")
+    if result == "stop" and len(held):
+        last = held.iloc[-1]
+        back = float(last["close"]) > stop if direction == "Long" else float(last["close"]) < stop
+        if back:
+            text = f"stop hit only by a wick that closed back ({held.index[-1].strftime('%H:%M')})"
+            if "volume" in frame.columns:
+                n = frame.index.get_loc(held.index[-1])
+                prior = frame["volume"].iloc[max(0, n - 20):n].astype(float)
+                if len(prior) and prior.mean() > 0 and float(last["volume"]) >= VOLUME_SPIKE * prior.mean():
+                    text += f" on a volume spike ({float(last['volume']) / prior.mean():.0f}x)"
+            flags.append(text)
+    return flags
+
+
 def note_trade(trade: dict, outcome: dict, m15: pd.DataFrame, daily: pd.DataFrame,
                closes_4h: pd.Series, setups_day: pd.DataFrame, views: dict | None) -> dict | None:
     """The checklist for one completed trade, or None when the candles needed are missing.
 
     m15: completed 15-minute candles in London time (zero-volume candles removed).
     daily: daily_by_date() frame. closes_4h: four_hour_closes(). setups_day: that day's setups.csv rows.
+    views: that day's picker views (None = no picker file).
     """
     day = str(trade["day"])
-    sign = 1 if trade["direction"] == "Long" else -1
+    direction = trade["direction"]
+    sign = 1 if direction == "Long" else -1
     fill, stop, target = float(outcome["fill"]), float(trade["stop"]), float(trade["target"])
     planned, exit_price = float(trade["entry"]), float(outcome["exit_price"])
     signal_time, exit_time = uk(trade["signal_time"]), uk(outcome["exit_time"])
@@ -135,32 +217,27 @@ def note_trade(trade: dict, outcome: dict, m15: pd.DataFrame, daily: pd.DataFram
     before = frame[frame.index < fill_start]
     if len(before) < 25:
         return None
-    notes = []
+    flags = []
     if abs(float(later["open"].iloc[0]) - fill) / fill > 0.001:
-        notes.append("entry candle's open differs from the recorded fill")
+        flags.append("entry candle's open differs from the recorded fill")
 
-    # 3. was the stop inside today's range before the entry candle?
+    # stop already traded through earlier today?
     earlier = today[today.index < fill_start]
     if earlier.empty:
-        inside = "No"
+        pretested = "No"
     elif sign == 1:
-        inside = "Yes" if float(earlier["low"].min()) <= stop else "No"
+        pretested = "Yes" if float(earlier["low"].min()) <= stop else "No"
     else:
-        inside = "Yes" if float(earlier["high"].max()) >= stop else "No"
+        pretested = "Yes" if float(earlier["high"].max()) >= stop else "No"
 
-    # 5, 6. averages from candles completed before the entry candle
+    # averages from candles completed before the entry candle
     close = before["close"].astype(float)
     ema9 = close.ewm(span=9, adjust=False).mean()
     sma20 = close.rolling(20).mean()
     e, s = float(ema9.iloc[-1]), float(sma20.iloc[-1])
     gap = (e - s) / s * 100
     slope = (s - float(sma20.iloc[-1 - SLOPE_CANDLES])) / s * 100
-    if gap > FLAT_GAP_PCT and slope > 0:
-        t15 = "Up"
-    elif gap < -FLAT_GAP_PCT and slope < 0:
-        t15 = "Down"
-    else:
-        t15 = "Flat"
+    ema_state = "Up" if gap > FLAT_GAP_PCT and slope > 0 else "Down" if gap < -FLAT_GAP_PCT and slope < 0 else "Flat"
 
     previous_days = daily[daily.index < day]
     d_trend, d_pct = "", None
@@ -174,10 +251,11 @@ def note_trade(trade: dict, outcome: dict, m15: pd.DataFrame, daily: pd.DataFram
         sma200 = float(h4_done.tail(SMA_4H_BARS).mean())
         h4_trend, h4_pct = trend_word(fill > sma200), (fill - sma200) / sma200 * 100
     wanted = "Up" if sign == 1 else "Down"
-    agreeing = sum(1 for t in (t15, d_trend, h4_trend) if t == wanted)
+    agreeing = sum(1 for t in (ema_state, d_trend, h4_trend) if t == wanted)
+    higher = " / ".join(f"{name} {t}" for name, t in (("Daily", d_trend), ("4h", h4_trend)) if t)
 
-    # 2. gap at the open, and the close for "held to 16:30"
-    gap_pct, close_1630 = None, None
+    # gap at the open, and the close for "held to 16:30"
+    gap_pct = None
     if day in daily.index:
         close_1630 = float(daily.loc[day, "close"])
         if len(previous_days):
@@ -185,9 +263,9 @@ def note_trade(trade: dict, outcome: dict, m15: pd.DataFrame, daily: pd.DataFram
             gap_pct = (float(daily.loc[day, "open"]) - prev) / prev * 100
     else:
         close_1630 = float(today["close"].iloc[-1])
-        notes.append("no daily candle: close from the last 15-minute candle")
+        flags.append("no daily candle: close from the last 15-minute candle")
 
-    # 7. signal candle volume
+    # signal candle volume
     vol_ratio = None
     if "volume" in frame.columns and signal_candle in frame.index:
         n = frame.index.get_loc(signal_candle)
@@ -195,56 +273,70 @@ def note_trade(trade: dict, outcome: dict, m15: pd.DataFrame, daily: pd.DataFram
         if len(prior) and prior.mean() > 0:
             vol_ratio = float(frame["volume"].iloc[n]) / prior.mean()
 
-    # 8. target against the typical day
+    # target against the typical day
     typical = sc.typical_daily_move_pct(frame[frame.index <= today.index[-1]])
     target_pct = abs(target - fill) / fill * 100
 
-    # 9. best and worst while open
+    # furthest for and against while open
     held = today[(today.index >= fill_start) & (today.index < exit_time)]
     if held.empty:
         held = later.iloc[:1]
     if sign == 1:
-        best = (float(held["high"].max()) - fill) / fill * 100
-        worst = (fill - float(held["low"].min())) / fill * 100
+        mfe = (float(held["high"].max()) - fill) / fill * 100
+        mae = (fill - float(held["low"].min())) / fill * 100
     else:
-        best = (fill - float(held["low"].min())) / fill * 100
-        worst = (float(held["high"].max()) - fill) / fill * 100
+        mfe = (fill - float(held["low"].min())) / fill * 100
+        mae = (float(held["high"].max()) - fill) / fill * 100
+    flags += quality_flags(direction, str(outcome["outcome"]), stop, held, before, frame, exit_time)
 
-    # 10. ideas the other way on the same share within an hour
-    opposite = 0
+    # the scanner's own setup row (zone) and ideas the other way within the hour
+    flips, zone_low, zone_high = 0, None, None
     if setups_day is not None and len(setups_day):
-        same = setups_day[(setups_day["ticker"] == trade["ticker"]) & (setups_day["direction"] != trade["direction"])]
-        times = pd.Series([uk(t) for t in same["run_time"]]) if len(same) else pd.Series(dtype=object)
-        opposite = int(sum(abs(t - signal_time) <= FLIP_WINDOW for t in times))
+        same_share = setups_day[setups_day["ticker"] == trade["ticker"]]
+        mine = same_share[(same_share["direction"] == direction)
+                          & (same_share["run_time"].astype(str) == str(trade["signal_time"]))]
+        if "setup" in mine.columns:
+            mine = mine[mine["setup"] == trade.get("setup")]
+        if len(mine) and {"zone_low", "zone_high"} <= set(mine.columns):
+            zone_low, zone_high = float(mine["zone_low"].iloc[0]), float(mine["zone_high"].iloc[0])
+        other = same_share[same_share["direction"] != direction]
+        flips = int(sum(abs(uk(t) - signal_time) <= FLIP_WINDOW for t in other["run_time"]))
+    place, margin = zone_position(direction, fill, zone_low, zone_high)
 
-    view, reason = (views or {}).get(str(trade["ticker"]).upper(), ("", ""))
+    if views is None:
+        view, reason, news = "No picker file", "", ""
+    else:
+        view, reason = views.get(str(trade["ticker"]).upper(), ("No view", ""))
+        news = "Yes" if NEWS_WORDS.search(reason or "") else "No"
     planned_room = abs(planned - stop) / planned * 100
     fill_room = abs(fill - stop) / fill * 100
+    kept = fill_room / planned_room * 100 if planned_room else None
     net = sign * (exit_price - fill) / fill * STAKE - STAKE * COST_PCT / 100
     hold = sign * (close_1630 - fill) / fill * STAKE - STAKE * COST_PCT / 100
     return {
         "key": trade["key"], "day": day, "trade_no": trade.get("trade_no"), "ticker": trade["ticker"],
-        "company": trade.get("company", ""), "setup": trade.get("setup", ""), "direction": trade["direction"],
+        "company": trade.get("company", ""), "setup": trade.get("setup", ""), "direction": direction,
         "score": trade.get("score"), "result": outcome["outcome"], "net_gbp": _r(net),
         "signal_time": signal_time.strftime("%H:%M"), "fill_time": fill_start.strftime("%H:%M"),
         "exit_time": exit_time.strftime("%H:%M"),
         "minutes_held": int((exit_time - fill_start).total_seconds() // 60),
         "planned_entry": _r(planned, 4), "fill": _r(fill, 4), "stop": _r(stop, 4), "target": _r(target, 4),
-        "exit_price": _r(exit_price, 4),
-        "picker_view": view or ("No view" if views is not None else "No picker file"), "picker_reason": reason,
-        "gap_pct": _r(gap_pct), "stop_inside_range": inside,
+        "exit_price": _r(exit_price, 4), "zone_low": _r(zone_low, 4), "zone_high": _r(zone_high, 4),
         "planned_stop_pct": _r(planned_room), "fill_stop_pct": _r(fill_room),
-        "stop_room_kept_pct": _r(fill_room / planned_room * 100 if planned_room else None, 0),
-        "trend_15m": t15, "ema9": _r(e, 4), "sma20": _r(s, 4), "ema9_sma20_gap_pct": _r(gap, 3),
-        "sma20_slope_pct": _r(slope, 3),
-        "daily_trend": d_trend, "daily_vs_sma50_pct": _r(d_pct), "trend_4h": h4_trend, "vs_4h_sma200_pct": _r(h4_pct),
-        "trends_agreeing": agreeing, "fill_vs_ema9_pct": _r((fill - e) / e * 100),
-        "signal_volume_ratio": _r(vol_ratio, 1),
+        "fill_room_pct": _r(kept, 0), "fill_room_band": room_band(kept), "stop_pretested": pretested,
         "target_pct": _r(target_pct), "typical_range_pct": _r(typical),
-        "target_vs_typical": _r(target_pct / typical if typical else None),
-        "best_pct": _r(best), "worst_pct": _r(worst), "close_1630": _r(close_1630, 4), "hold_to_close_gbp": _r(hold),
-        "opposite_ideas_1h": opposite, "flip_flop": "Yes" if opposite else "No",
-        "data_note": "; ".join(notes),
+        "target_vs_daily_range": _r(target_pct / typical if typical else None),
+        "fill_vs_zone": place, "fill_zone_margin_pct": _r(margin, 3),
+        "signal_intact": signal_intact(str(trade.get("setup", "")), place),
+        "regime": regime_label(ema_state, flips, d_pct, h4_pct, d_trend, h4_trend),
+        "ema_state": ema_state, "flip_count_60m": flips,
+        "news_day": news, "picker_view": view, "picker_reason": reason, "gap_pct": _r(gap_pct),
+        "higher_tf_state": higher, "daily_trend": d_trend, "daily_vs_sma50_pct": _r(d_pct),
+        "trend_4h": h4_trend, "vs_4h_sma200_pct": _r(h4_pct), "trends_agreeing": agreeing,
+        "ema9": _r(e, 4), "sma20": _r(s, 4), "ema9_sma20_gap_pct": _r(gap, 3), "sma20_slope_pct": _r(slope, 3),
+        "fill_vs_ema9_pct": _r((fill - e) / e * 100), "signal_volume_ratio": _r(vol_ratio, 1),
+        "mfe_pct": _r(mfe), "mae_pct": _r(mae), "close_1630": _r(close_1630, 4), "close_outcome_gbp": _r(hold),
+        "data_quality_flag": "; ".join(flags),
     }
 
 
@@ -290,11 +382,12 @@ def build_notes(todo: pd.DataFrame, m15: dict, daily: dict, hourly: dict, data_d
 
 def summary(notes: pd.DataFrame) -> list[str]:
     """A few plain-English groupings for the log (the Friday review does the real comparison)."""
-    lines = [f"{len(notes)} trades noted, £{notes['net_gbp'].sum():+.2f} in all."]
-    for column in ("stop_inside_range", "trend_15m", "flip_flop", "picker_view"):
+    lines = [f"{len(notes)} trades noted, £{notes['net_gbp'].sum():+.2f} in all "
+             f"(held to 16:30 instead: £{notes['close_outcome_gbp'].sum():+.2f})."]
+    for column in ("fill_room_band", "stop_pretested", "signal_intact", "regime", "news_day"):
         parts = []
-        for value, part in notes.groupby(column, dropna=False):
-            parts.append(f"{value or 'blank'} {len(part)} (£{part['net_gbp'].sum():+.2f})")
+        for value, part in notes.groupby(notes[column].fillna("blank").replace("", "blank")):
+            parts.append(f"{value} {len(part)} (£{part['net_gbp'].sum():+.2f})")
         lines.append(f"  {column}: " + ", ".join(parts))
     return lines
 
@@ -314,6 +407,9 @@ def run(data_dir: Path, rebuild: bool, now: pd.Timestamp | None = None, fetch=do
     if trades.empty:
         print("No completed live mock trades yet. Nothing to note.")
         return 0
+    if len(old) and list(old.columns) != COLUMNS:
+        print("Trade notes file has an older layout: rebuilding every trade still in reach.")
+        rebuild = True
     oldest = str((now - pd.Timedelta(days=MAX_AGE_DAYS)).date())
     in_reach = trades[trades["day"] >= oldest]
     todo = in_reach if rebuild else in_reach[~in_reach["key"].isin(set(old["key"]))]
@@ -328,7 +424,7 @@ def run(data_dir: Path, rebuild: bool, now: pd.Timestamp | None = None, fetch=do
     if not rows:
         return 1 if missed else 0
     fresh = pd.DataFrame(rows, columns=COLUMNS)
-    kept = old[~old["key"].isin(set(fresh["key"]))]
+    kept = old[~old["key"].isin(set(fresh["key"]))].reindex(columns=COLUMNS)
     every = fresh if kept.empty else pd.concat([kept, fresh], ignore_index=True)
     every = every.reindex(columns=COLUMNS).sort_values(["day", "trade_no"]).reset_index(drop=True)
     tmp = path.with_suffix(".csv.tmp")
@@ -341,7 +437,7 @@ def run(data_dir: Path, rebuild: bool, now: pd.Timestamp | None = None, fetch=do
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Record the trade-autopsy checklist for every completed live mock trade")
+    parser = argparse.ArgumentParser(description="Record the trade-feasibility checklist for every completed live mock trade")
     parser.add_argument("--data-dir", default=str(sc.DEFAULT_DATA_DIR))
     parser.add_argument("--rebuild", action="store_true", help="redo every trade still within Yahoo's 60 days")
     args = parser.parse_args()

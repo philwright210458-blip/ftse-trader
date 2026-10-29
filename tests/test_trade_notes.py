@@ -83,8 +83,9 @@ class NoteTradeTests(unittest.TestCase):
 
     def test_picker_and_flip_flop(self):
         setups = pd.DataFrame([
-            {"ticker": "A.L", "direction": "Short", "run_time": "2026-10-29 09:02:08"},   # within the hour
-            {"ticker": "A.L", "direction": "Short", "run_time": "2026-10-29 11:02:08"},   # too late
+            {"ticker": "A.L", "direction": "Short", "run_time": "2026-10-29 08:02:08"},   # within the hour before
+            {"ticker": "A.L", "direction": "Short", "run_time": "2026-10-29 09:02:08"},   # after the signal: not known yet
+            {"ticker": "A.L", "direction": "Short", "run_time": "2026-10-29 07:02:08"},   # too early
             {"ticker": "B.L", "direction": "Short", "run_time": "2026-10-29 08:47:00"},   # other share
             {"ticker": "A.L", "direction": "Long", "run_time": "2026-10-29 08:47:00"}])   # same way
         row = tn.note_trade(trade(), outcome(), self.m15, self.daily, pd.Series(dtype=float), setups,
@@ -189,6 +190,36 @@ class FeasibilityTests(unittest.TestCase):
         self.assertIn("extreme wick 09:00", row["data_quality_flag"])
 
 
+class ZoneAgeTests(unittest.TestCase):
+    def wave(self):
+        index = pd.date_range(f"{DAY} 08:00", periods=34, freq="15min", tz=UK)
+        prices = [100 + abs((i % 10) - 5) / 5 for i in range(34)]          # lows of 100 at 09:15, 11:45, 14:15
+        frame = pd.DataFrame({"open": prices, "close": prices, "high": [p + 0.05 for p in prices],
+                              "low": [p - 0.05 for p in prices], "volume": 1000.0}, index=index)
+        return pd.concat([flat_history(level=110.0), frame])
+
+    def test_zone_found_with_first_touch_and_count(self):
+        frame = self.wave()
+        first, touches = tn.zone_history(frame, pd.Timestamp(f"{DAY} 16:00", tz=UK), 99.95, 99.95)
+        self.assertEqual((first.strftime("%H:%M"), touches), ("09:15", 3))
+
+    def test_unmatched_zone(self):
+        self.assertEqual(tn.zone_history(self.wave(), pd.Timestamp(f"{DAY} 16:00", tz=UK), 95.0, 96.0), (None, 0))
+        self.assertEqual(tn.zone_history(self.wave(), pd.Timestamp(f"{DAY} 16:00", tz=UK), None, None), (None, 0))
+
+    def test_age_in_trading_minutes(self):
+        frame = self.wave()
+        t = trade(stop=99.0, target=102.0, entry=100.2, data_time="2026-10-29T15:15:00+00:00",
+                  signal_time="2026-10-29 15:32:00")
+        setups = pd.DataFrame([{"ticker": "A.L", "direction": "Long", "setup": "Breakout", "run_time": t["signal_time"],
+                                "zone_low": 99.95, "zone_high": 99.95}])
+        row = tn.note_trade(t, outcome(fill=100.2, exit_price=99.0, exit_time="2026-10-29T16:15:00+00:00"),
+                            frame, daily_frame(level=110.0), pd.Series(dtype=float), setups, None)
+        self.assertEqual(row["zone_touches"], 3)
+        self.assertEqual(row["zone_formed_today"], "Yes")
+        self.assertEqual(row["zone_age_minutes"], 25 * 15)                  # 09:15 to the 15:15 candle, inclusive
+
+
 class FourHourTests(unittest.TestCase):
     def test_blocks_from_the_open(self):
         index = pd.date_range(f"{DAY} 08:00", periods=9, freq="h", tz=UK)
@@ -239,6 +270,23 @@ class RunTests(unittest.TestCase):
         notes = pd.read_csv(self.dir / tn.NOTES_FILE)
         self.assertEqual(list(notes.columns), tn.COLUMNS)
         self.assertEqual(len(notes), 1)
+
+    def test_skipped_trade_gets_a_counterfactual(self):
+        t = {**trade(), "key": "k|skip"}
+        pd.DataFrame([{**trade(), "mode": "watch", "index": "FTSE 100", "risk_pct": 2.5},
+                      {**t, "mode": "watch", "index": "FTSE 100", "risk_pct": 2.5}]).to_csv(
+            self.dir / "live_mock_trades.csv", index=False)
+        outcomes = pd.read_csv(self.dir / "outcomes.v3.csv")
+        skip = outcomes.iloc[0].copy()
+        skip["key"], skip["status"], skip["outcome"], skip["exit_price"], skip["exit_time"] = "k|skip", "skipped", "thin_stop", None, None
+        pd.concat([outcomes, skip.to_frame().T]).to_csv(self.dir / "outcomes.v3.csv", index=False)
+        tn.run(self.dir, False, self.now, self.fetch)
+        notes = pd.read_csv(self.dir / tn.NOTES_FILE).set_index("key")
+        self.assertEqual(notes.loc["k|Long", "entered"], "Yes")
+        self.assertEqual(notes.loc["k|skip", "entered"], "No: fill check")
+        self.assertTrue(pd.isna(notes.loc["k|skip", "net_gbp"]))
+        self.assertEqual(notes.loc["k|skip", "counterfactual_result"], "timeout")   # flat day: closed at 16:30
+        self.assertAlmostEqual(notes.loc["k|skip", "counterfactual_gbp"], -0.10)
 
     def test_old_trades_are_out_of_reach(self):
         later = self.now + pd.Timedelta(days=tn.MAX_AGE_DAYS + 1)

@@ -16,9 +16,11 @@ create an edge the signal does not have. This backtest therefore asks four quest
               50-day and 4-hour 200 averages)
        F      zone at least 2 trading hours old
   2. SELF-SEARCH (discovery done safely): every recorded feature is split into groups; the FIRST half of the
-     period is searched for the groups worth skipping or keeping; the best few candidates are then checked
-     on the SECOND half, which the search never saw. Only candidates that still help there, with enough
-     trades, are reported as worth a live test.
+     period is searched for the groups worth skipping or keeping, ranked by how much they raise the AVERAGE
+     per trade (not total pounds, which rewards simply trading less while trades lose); the best few are then
+     checked on the SECOND half, which the search never saw, against random sets of the same number of trades.
+     Only candidates that beat over 99% of those random sets (5% shared across the six candidates) are
+     reported as worth a live test.
   3. EXITS: the same entries with exits fixed in advance: current target and stop, half the target, hold
      to 16:30 (stop kept), stop to break-even after a gain equal to the stop distance, 2-hour time limit,
      and direction only (no stop or target: open to 16:30).
@@ -65,6 +67,7 @@ MIN_GROUP_FIRST_HALF = 20                 # self-search: smallest group consider
 MIN_GROUP_TOTAL = 30                      # ... and in both halves together
 MIN_GROUP_SECOND_HALF = 10
 TOP_CANDIDATES = 6
+LUCK_LIMIT = 0.05 / TOP_CANDIDATES        # several candidates are checked, so each must beat luck more clearly
 RANDOM_RUNS = 1000
 SEED = 29102026
 
@@ -375,45 +378,67 @@ def groups_for(table: pd.DataFrame, first: pd.Series) -> list[tuple[str, str, pd
     return out_groups
 
 
+def random_subset_share(values: np.ndarray, size: int, target: float, runs: int = RANDOM_RUNS, seed: int = SEED) -> float:
+    """Share of random subsets of the same size whose average is at least `target` (how often luck does as well)."""
+    if size <= 0 or size > len(values):
+        return 1.0
+    rng = np.random.default_rng(seed)
+    averages = np.array([values[rng.choice(len(values), size, replace=False)].mean() for _ in range(runs)])
+    return float((averages >= target - 1e-12).mean())
+
+
 def self_search(table: pd.DataFrame, split: str) -> pd.DataFrame:
-    """Rank 'skip this group' and 'only this group' rules by how much they add on the first half; check the best
-    on the second half."""
+    """'Skip this group' and 'only this group' rules, ranked by how much they raise the AVERAGE per trade on the
+    first half. (Ranking by total pounds would reward simply trading less while the average trade loses.)
+    The best few are checked on the second half: the kept trades' average must beat the second half's average
+    by more than random subsets of the same size do in all but LUCK_LIMIT of cases (5% shared across the candidates)."""
     net = table["net_gbp"].astype(float)
     first, second = table["day"] < split, table["day"] >= split
+    base_first, base_second = float(net[first].mean()), float(net[second].mean())
     rows = []
     for feature, label, mask in groups_for(table, first):
-        in_first = mask & first
-        if in_first.sum() < MIN_GROUP_FIRST_HALF or (first & ~mask).sum() < MIN_GROUP_FIRST_HALF:
+        if (mask & first).sum() < MIN_GROUP_FIRST_HALF or (first & ~mask).sum() < MIN_GROUP_FIRST_HALF:
             continue
         for action in ("Skip", "Only"):
-            removed = mask if action == "Skip" else ~mask
-            gain_first = -float(net[removed & first].sum())
-            gain_second = -float(net[removed & second].sum())
-            kept = ~removed
+            kept = ~mask if action == "Skip" else mask
+            avg_first = float(net[kept & first].mean())
+            avg_second = float(net[kept & second].mean()) if (kept & second).any() else None
             rows.append({"Rule": f"{action} trades where {LABELS.get(feature, feature)} is {label}", "Feature": feature,
                          "Group": label, "Action": action,
                          "Trades kept (first half)": int((kept & first).sum()),
                          "Trades kept (second half)": int((kept & second).sum()),
-                         "Trades removed (both halves)": int(removed.sum()),
-                         "Gain, first half (£)": gain_first, "Gain, second half (£)": gain_second,
-                         "Average kept, first half (£)": float(net[kept & first].mean()) if (kept & first).any() else None,
-                         "Average kept, second half (£)": float(net[kept & second].mean()) if (kept & second).any() else None})
+                         "Average kept, first half (£)": avg_first, "All trades, first half (£)": base_first,
+                         "Average kept, second half (£)": avg_second, "All trades, second half (£)": base_second,
+                         "Improvement, first half (£ per trade)": avg_first - base_first,
+                         "Improvement, second half (£ per trade)": None if avg_second is None else avg_second - base_second})
     found = pd.DataFrame(rows)
     if found.empty:
         return found
-    found = found.sort_values("Gain, first half (£)", ascending=False).reset_index(drop=True)
-    top = found[found["Gain, first half (£)"] > 0].drop_duplicates("Feature").head(TOP_CANDIDATES).index
+    found = found.sort_values("Improvement, first half (£ per trade)", ascending=False).reset_index(drop=True)
+    top = found[found["Improvement, first half (£ per trade)"] > 0].drop_duplicates("Feature").head(TOP_CANDIDATES).index
     found["Candidate"] = found.index.isin(top)
-
-    def verdict(row):
+    second_values = net[second].to_numpy()
+    lucky, verdicts = [], []
+    for _, row in found.iterrows():
         if not row["Candidate"]:
-            return ""
-        enough = row["Trades kept (second half)"] >= MIN_GROUP_SECOND_HALF and \
-            row["Trades kept (first half)"] + row["Trades kept (second half)"] >= MIN_GROUP_TOTAL
-        if not enough:
-            return "Not confirmed: too few trades"
-        return "Confirmed on unseen half" if row["Gain, second half (£)"] > 0 else "Not confirmed: did not help on the second half"
-    found["Check on second half"] = found.apply(verdict, axis=1)
+            lucky.append(None)
+            verdicts.append("")
+            continue
+        size = int(row["Trades kept (second half)"])
+        share = random_subset_share(second_values, size, row["Average kept, second half (£)"]) if size else 1.0
+        lucky.append(share)
+        if size < MIN_GROUP_SECOND_HALF or row["Trades kept (first half)"] + size < MIN_GROUP_TOTAL:
+            verdicts.append("Not confirmed: too few trades")
+        elif (row["Improvement, second half (£ per trade)"] or 0) <= 0:
+            verdicts.append("Not confirmed: did not help on the second half")
+        elif share >= LUCK_LIMIT:
+            verdicts.append("Not confirmed: random trades of the same number did as well too often")
+        else:
+            profit = " and the kept trades made money" if row["Average kept, second half (£)"] > 0 else \
+                ", but the kept trades still lost money"
+            verdicts.append(f"Confirmed on unseen half{profit}")
+    found["Random subsets as good (second half)"] = lucky
+    found["Check on second half"] = verdicts
     return found
 
 
@@ -444,7 +469,8 @@ def rule_verdicts(table: pd.DataFrame) -> list[str]:
         better = [row.get(f"{half}: average (£)", 0) is not None and base.get(f"{half}: average (£)") is not None
                   and row[f"{half}: average (£)"] > base[f"{half}: average (£)"] for half in ("First half", "Second half")]
         state = "helped in both halves" if all(better) else "helped in one half only" if any(better) else "did not help"
-        lines.append(f"{row['Rules']}: {state} (average per trade £{row['Average per £100 trade (£)']:+.2f} "
+        money = "makes money" if row["Average per £100 trade (£)"] > 0 else "still loses money"
+        lines.append(f"{row['Rules']}: {state}, {money} (average per trade £{row['Average per £100 trade (£)']:+.2f} "
                      f"v £{base['Average per £100 trade (£)']:+.2f}; {int(row['Trades'])} trades)")
     return lines
 
@@ -566,15 +592,20 @@ def run(args) -> int:
                        f"£{(chance['random_time_average_total'] or 0):+.2f}; {(chance['random_time_as_good'] or 0):.0%} did as well.")
         time_share = chance["random_time_as_good"]
         beats = chance["random_direction_as_good"] < 0.05 and time_share is not None and time_share < 0.05
+        costs = chance["trades"] * STAKE * COST_PCT / 100
+        verdict.append(f"Before costs (£{costs:.2f} in all) the scanner made £{chance['scanner_total'] + costs:+.2f}; "
+                       f"trading every signal the opposite way would have made £{chance['opposite_total']:+.2f} after costs.")
         verdict.append("The scanner's choice of direction and timing does better than chance." if beats else
                        "The scanner does not clearly beat chance: filters cannot create an edge that is not there, "
                        "so the improvement has to come from the entry signal itself or from the exits.")
     verdict += rule_verdicts(rules)
-    confirmed = search[search["Check on second half"] == "Confirmed on unseen half"] if not search.empty else search
+    confirmed = search[search["Check on second half"].str.startswith("Confirmed")] if not search.empty else search
     if len(confirmed):
         for _, row in confirmed.iterrows():
-            verdict.append(f"Self-search found and confirmed: {row['Rule']} (gain £{row['Gain, first half (£)']:+.2f} on the "
-                           f"first half, £{row['Gain, second half (£)']:+.2f} on the unseen second half).")
+            verdict.append(f"Self-search found and confirmed: {row['Rule']} (average per trade £{row['Average kept, first half (£)']:+.2f} "
+                           f"v £{row['All trades, first half (£)']:+.2f} on the first half; £{row['Average kept, second half (£)']:+.2f} "
+                           f"v £{row['All trades, second half (£)']:+.2f} on the unseen second half; "
+                           f"{int(row['Trades kept (first half)'] + row['Trades kept (second half)'])} trades). {row['Check on second half']}.")
     else:
         verdict.append("Self-search: no candidate held up on the unseen second half.")
     if not exit_table.empty:
@@ -628,6 +659,8 @@ def run(args) -> int:
                     "trades": table.replace({np.nan: None})[[c for c in ("day", "net_gbp", "setup", "direction", "regime",
                                                                          "stop_pretested", "fill_room_band", "signal_intact")
                                                              if c in table.columns]].to_dict("records") if not table.empty else []}
+    if not table.empty:
+        table.to_csv(Path(args.out).with_name(Path(args.out).stem + "_trades.csv"), index=False)
     json_path = Path(args.out).with_suffix(".json")
     json_path.write_text(json.dumps(summary_json, indent=1, default=str))
     for line in verdict:

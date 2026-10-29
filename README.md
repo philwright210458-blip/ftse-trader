@@ -19,7 +19,7 @@ The timers are on cron-job.org; each one starts a GitHub workflow.
 | 17:05 | FTSE Outcomes (`outcomes.yml`) | Scores the live mock trades (sheet **Live Mock Trades**: one totals row with the comparison with every idea, then each completed trade from row 5; sheet **Daily**: running balance chart; sheet **Notes**: explanations); also runs the momentum and structure paper traders, and saves the trade notes (`scan_data/trade_notes.csv`: the trade-feasibility and autopsy checklist for every completed live mock trade; recorded features, not rules) | `ftse_outcomes.xlsx`, `ftse_momentum_live.xlsx`, `ftse_structure_live.xlsx` |
 | after each scan | Publish scans (`publish_scans.yml`) | Sends scan results to the shared dashboard | (dashboard) |
 
-Workflows run by hand from the Actions tab: **FTSE Backtest**, **FTSE Range v2 Backtest** and **FTSE Momentum Backtest**. They save their workbooks in `results/`.
+Workflows run by hand from the Actions tab: **FTSE Feasibility Backtest** (FTSE 100: feasibility rules, a self-search for improvements confirmed on unseen data, alternative exits, and a test against random entries; `results/ftse_feasibility.xlsx`), **FTSE Backtest**, **FTSE Range v2 Backtest** and **FTSE Momentum Backtest**. They save their workbooks in `results/`.
 
 ## The models
 

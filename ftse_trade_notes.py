@@ -18,7 +18,16 @@ The trade-feasibility bundle (assessed between the signal and the mock entry):
   fill_zone_margin_pct ............... where the fill sat against the scanner's zone: Beyond (past the
                                        zone on the trade's side), Inside, or Through (back out the
                                        wrong side). Breakout: Yes only if Beyond; Range: No if Through
-  regime, ema_state, flip_count_60m .. Sideways / Trending / Mixed (see regime_label)
+  regime, ema_state, flip_count_60m .. Sideways / Trending / Mixed (see regime_label); flips are ideas the
+                                       other way on the same share in the 60 minutes up to the signal
+  zone_age_minutes, zone_formed_today,
+  zone_touches ....................... trading minutes from the zone's first touch to the signal candle,
+                                       whether every touch was that day, and the number of touches
+
+Skipped trades (from 30 Oct 2026): a trade the fill check skipped (too little room to the stop at the entry
+price) is noted too, with entered = "No: fill check", net_gbp left empty, and counterfactual_result /
+counterfactual_gbp saying what it would have done had it been entered. So the review can tell whether the
+fill check removes losers or cuts winners. Totals of real results must use entered = "Yes" rows only.
 
 Context and results:
   news_day, picker_view, picker_reason, gap_pct, higher_tf_state (daily 50-day / 4-hour 200 SMA),
@@ -46,7 +55,7 @@ import numpy as np
 import pandas as pd
 
 import ftse_trade_scanner as sc
-from ftse_execution import completed_candles, drop_untraded_bars
+from ftse_execution import completed_candles, drop_untraded_bars, simulate
 from ftse_picker import load_views
 
 NOTES_FILE = "trade_notes.csv"
@@ -65,7 +74,9 @@ NEWS_WORDS = re.compile(r"result|trading update|update|statement|production|repo
 COLUMNS = [
     "key", "day", "trade_no", "ticker", "company", "setup", "direction", "score", "result", "net_gbp",
     "signal_time", "fill_time", "exit_time", "minutes_held",
+    "entered", "counterfactual_result", "counterfactual_gbp",
     "planned_entry", "fill", "stop", "target", "exit_price", "zone_low", "zone_high",
+    "zone_age_minutes", "zone_formed_today", "zone_touches",
     # trade feasibility
     "planned_stop_pct", "fill_stop_pct", "fill_room_pct", "fill_room_band", "stop_pretested",
     "target_pct", "typical_range_pct", "target_vs_daily_range",
@@ -192,13 +203,35 @@ def quality_flags(direction: str, result: str, stop: float, held: pd.DataFrame, 
     return flags
 
 
+def zone_history(frame: pd.DataFrame, signal_candle: pd.Timestamp, low: float | None, high: float | None,
+                 index_label: str = "FTSE 100") -> tuple[pd.Timestamp | None, int]:
+    """First touch time and touch count of the scanner's zone, rebuilt from the candles completed by the signal
+    with the scanner's own zone rules. (None, 0) if the zone cannot be matched."""
+    if low is None or high is None or not (math.isfinite(low) and math.isfinite(high)):
+        return None, 0
+    cfg = sc.INDEX_RULES.get(index_label, sc.INDEX_RULES["FTSE 100"])
+    visible = frame[frame.index <= signal_candle]
+    if len(visible) <= cfg.swing_lookback * 2:
+        return None, 0
+    zones = sc.qualify_zones(sc.cluster_zones(sc.find_swing_points(visible, cfg.swing_lookback), cfg.zone_tolerance_pct),
+                             visible, cfg)
+    tolerance = max(abs(high), abs(low)) * 0.0005
+    for zone in zones:
+        if abs(zone.low - low) <= tolerance and abs(zone.high - high) <= tolerance and zone.touches:
+            return min(point.ts for point in zone.touches), zone.touch_count
+    return None, 0
+
+
 def note_trade(trade: dict, outcome: dict, m15: pd.DataFrame, daily: pd.DataFrame,
-               closes_4h: pd.Series, setups_day: pd.DataFrame, views: dict | None) -> dict | None:
+               closes_4h: pd.Series, setups_day: pd.DataFrame, views: dict | None,
+               zone_info: tuple | None = None) -> dict | None:
     """The checklist for one completed trade, or None when the candles needed are missing.
 
     m15: completed 15-minute candles in London time (zero-volume candles removed).
     daily: daily_by_date() frame. closes_4h: four_hour_closes(). setups_day: that day's setups.csv rows.
     views: that day's picker views (None = no picker file).
+    zone_info: (zone_low, zone_high, first touch, touches) when the caller already knows the zone (backtests);
+    otherwise the zone comes from setups_day and is rebuilt from the candles.
     """
     day = str(trade["day"])
     direction = trade["direction"]
@@ -300,8 +333,16 @@ def note_trade(trade: dict, outcome: dict, m15: pd.DataFrame, daily: pd.DataFram
         if len(mine) and {"zone_low", "zone_high"} <= set(mine.columns):
             zone_low, zone_high = float(mine["zone_low"].iloc[0]), float(mine["zone_high"].iloc[0])
         other = same_share[same_share["direction"] != direction]
-        flips = int(sum(abs(uk(t) - signal_time) <= FLIP_WINDOW for t in other["run_time"]))
+        flips = int(sum(signal_time - FLIP_WINDOW <= uk(t) <= signal_time for t in other["run_time"]))
+    if zone_info is not None:
+        zone_low, zone_high, first_touch, touches = zone_info
+    else:
+        first_touch, touches = zone_history(frame, signal_candle, zone_low, zone_high, str(trade.get("index") or "FTSE 100"))
     place, margin = zone_position(direction, fill, zone_low, zone_high)
+    zone_age, zone_today = None, ""
+    if first_touch is not None:
+        zone_age = int(((frame.index >= first_touch) & (frame.index <= signal_candle)).sum()) * 15
+        zone_today = "Yes" if first_touch.strftime("%Y-%m-%d") == day else "No"
 
     if views is None:
         view, reason, news = "No picker file", "", ""
@@ -322,6 +363,8 @@ def note_trade(trade: dict, outcome: dict, m15: pd.DataFrame, daily: pd.DataFram
         "minutes_held": int((exit_time - fill_start).total_seconds() // 60),
         "planned_entry": _r(planned, 4), "fill": _r(fill, 4), "stop": _r(stop, 4), "target": _r(target, 4),
         "exit_price": _r(exit_price, 4), "zone_low": _r(zone_low, 4), "zone_high": _r(zone_high, 4),
+        "zone_age_minutes": zone_age, "zone_formed_today": zone_today, "zone_touches": touches or None,
+        "entered": "Yes",
         "planned_stop_pct": _r(planned_room), "fill_stop_pct": _r(fill_room),
         "fill_room_pct": _r(kept, 0), "fill_room_band": room_band(kept), "stop_pretested": pretested,
         "target_pct": _r(target_pct), "typical_range_pct": _r(typical),
@@ -347,8 +390,20 @@ def completed_trades(data_dir: Path) -> pd.DataFrame:
         return pd.DataFrame()
     trades = pd.read_csv(trades_path, dtype={"day": str})
     outcomes = pd.read_csv(outcomes_path, dtype={"day": str})
-    outcomes = outcomes[outcomes["status"] == "done"][["key", "outcome", "fill", "exit_price", "exit_time"]]
-    return trades.merge(outcomes, on="key", how="inner").dropna(subset=["fill", "exit_price", "exit_time"])
+    done = outcomes["status"] == "done"
+    skipped = (outcomes["status"] == "skipped") & (outcomes["outcome"] == "thin_stop")
+    outcomes = outcomes[done | skipped][["key", "status", "outcome", "fill", "exit_price", "exit_time"]]
+    merged = trades.merge(outcomes, on="key", how="inner")
+    return merged[(merged["status"] == "skipped") | merged[["fill", "exit_price", "exit_time"]].notna().all(axis=1)]
+
+
+def counterfactual(trade: dict, frame: pd.DataFrame, now: pd.Timestamp) -> dict | None:
+    """What a skipped trade would have done had it been entered at the next candle's open (no fill check)."""
+    signal_close = max(uk(trade["data_time"]) + pd.Timedelta(minutes=15), uk(trade["signal_time"]))
+    sim = simulate(trade["direction"], float(trade["stop"]), float(trade["target"]), signal_close, frame, 1, now, "15m")
+    if sim.status != "done":
+        return None
+    return {"fill": sim.fill, "exit_price": sim.exit_price, "exit_time": sim.exit_time, "outcome": sim.outcome}
 
 
 def read_notes(path: Path) -> pd.DataFrame:
@@ -358,7 +413,8 @@ def read_notes(path: Path) -> pd.DataFrame:
 
 
 def build_notes(todo: pd.DataFrame, m15: dict, daily: dict, hourly: dict, data_dir: Path,
-                now_text: str) -> tuple[list[dict], list[str]]:
+                now_text: str, now: pd.Timestamp | None = None) -> tuple[list[dict], list[str]]:
+    now = now or pd.Timestamp.now(tz=sc.UK_TZ)
     setups = sc._read_table(data_dir / "setups.csv", sc.SETUP_COLUMNS)
     rows, missed = [], []
     closes4 = {t: four_hour_closes(h) for t, h in hourly.items()}
@@ -368,10 +424,18 @@ def build_notes(todo: pd.DataFrame, m15: dict, daily: dict, hourly: dict, data_d
         frame = m15.get(ticker)
         row = None
         if frame is not None and not frame.empty:
-            row = note_trade(trade.to_dict(), trade.to_dict(), frame, dailies.get(ticker, daily_by_date(None)),
-                             closes4.get(ticker, pd.Series(dtype=float)),
-                             setups[setups["day"].astype(str) == day] if len(setups) else setups,
-                             load_views(data_dir, day))
+            outcome = trade.to_dict()
+            was_skipped = str(trade.get("status", "done")) == "skipped"
+            if was_skipped:
+                outcome = counterfactual(trade.to_dict(), frame, now)
+            if outcome is not None:
+                row = note_trade(trade.to_dict(), outcome, frame, dailies.get(ticker, daily_by_date(None)),
+                                 closes4.get(ticker, pd.Series(dtype=float)),
+                                 setups[setups["day"].astype(str) == day] if len(setups) else setups,
+                                 load_views(data_dir, day))
+            if row is not None and was_skipped:
+                row.update({"entered": "No: fill check", "counterfactual_result": row["result"],
+                            "counterfactual_gbp": row["net_gbp"], "result": "skipped: thin stop", "net_gbp": None})
         if row is None:
             missed.append(f"{day} {ticker}")
             continue
@@ -382,9 +446,14 @@ def build_notes(todo: pd.DataFrame, m15: dict, daily: dict, hourly: dict, data_d
 
 def summary(notes: pd.DataFrame) -> list[str]:
     """A few plain-English groupings for the log (the Friday review does the real comparison)."""
+    skipped = notes[notes["entered"] != "Yes"]
+    notes = notes[notes["entered"] == "Yes"]
     lines = [f"{len(notes)} trades noted, £{notes['net_gbp'].sum():+.2f} in all "
              f"(held to 16:30 instead: £{notes['close_outcome_gbp'].sum():+.2f})."]
-    for column in ("fill_room_band", "stop_pretested", "signal_intact", "regime", "news_day"):
+    if len(skipped):
+        lines.append(f"  {len(skipped)} trade(s) skipped by the fill check would have made "
+                     f"£{skipped['counterfactual_gbp'].sum():+.2f} if entered.")
+    for column in ("fill_room_band", "stop_pretested", "signal_intact", "regime", "news_day", "zone_formed_today"):
         parts = []
         for value, part in notes.groupby(notes[column].fillna("blank").replace("", "blank")):
             parts.append(f"{value} {len(part)} (£{part['net_gbp'].sum():+.2f})")
@@ -418,7 +487,7 @@ def run(data_dir: Path, rebuild: bool, now: pd.Timestamp | None = None, fetch=do
         return 0
     print(f"Trade notes: {len(todo)} trade(s) to note; downloading candles for {todo['ticker'].nunique()} share(s)...")
     m15, daily, hourly = fetch(sorted(todo["ticker"].unique()))
-    rows, missed = build_notes(todo, m15, daily, hourly, data_dir, now.strftime("%Y-%m-%d %H:%M"))
+    rows, missed = build_notes(todo, m15, daily, hourly, data_dir, now.strftime("%Y-%m-%d %H:%M"), now)
     if missed:
         print(f"Could not note {len(missed)} trade(s) (candles missing; will retry next run): " + ", ".join(missed[:10]))
     if not rows:

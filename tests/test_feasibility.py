@@ -77,13 +77,32 @@ class SelfSearchTests(unittest.TestCase):
         best = found[found["Candidate"]].iloc[0]
         self.assertEqual(best["Feature"], "stop_pretested")
         self.assertIn((best["Group"], best["Action"]), [("Yes", "Skip"), ("No", "Only")])   # the same rule
-        self.assertEqual(best["Check on second half"], "Confirmed on unseen half")
+        self.assertEqual(best["Check on second half"], "Confirmed on unseen half and the kept trades made money")
 
     def test_rejects_a_pattern_that_fades(self):
         found = fb.self_search(self.table(False), "2026-10-15")
         best = found[found["Candidate"]].iloc[0]
         self.assertEqual(best["Feature"], "stop_pretested")
         self.assertEqual(best["Check on second half"], "Not confirmed: did not help on the second half")
+
+
+class TradingLessIsNotAnImprovementTests(unittest.TestCase):
+    def test_random_groups_are_rarely_confirmed_when_every_trade_loses_a_little(self):
+        days = [f"2026-10-{d:02d}" for d in range(1, 29)]
+        false_finds = 0
+        for seed in range(10):
+            rng = np.random.default_rng(seed)
+            rows = [{"day": day, "net_gbp": float(rng.normal(-0.14, 1.0)), "weekday": ["Mon", "Tue", "Wed", "Thu", "Fri"][n % 5],
+                     "score": float(rng.uniform(0, 100)), "hour": int(rng.integers(8, 16)), "setup": "Range",
+                     "direction": "Long"} for n, day in enumerate(days * 14)]
+            found = fb.self_search(pd.DataFrame(rows), "2026-10-15")
+            false_finds += found["Check on second half"].str.startswith("Confirmed").any()
+        self.assertLessEqual(false_finds, 1)
+
+    def test_random_subset_share(self):
+        values = np.array([-1.0] * 50 + [1.0] * 50)
+        self.assertLess(fb.random_subset_share(values, 20, 1.0), 0.01)
+        self.assertGreater(fb.random_subset_share(values, 20, 0.0), 0.3)
 
 
 class RuleTests(unittest.TestCase):

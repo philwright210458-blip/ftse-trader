@@ -62,6 +62,13 @@ jobs:
         continue-on-error: true
         run: python -u ftse_daily_moves.py
 
+      # The trade-autopsy checklist for every completed live mock trade (scan_data/trade_notes.csv,
+      # from 29 Oct 2026): picker label, gap, stop inside the morning's range, trends, volume, best/worst
+      # move, held-to-close result, flip-flopping. Records only; never changes trades.
+      - name: Save trade notes
+        continue-on-error: true
+        run: python -u ftse_trade_notes.py
+
       - name: Save results to the repo
         run: |
           git config user.name "github-actions[bot]"

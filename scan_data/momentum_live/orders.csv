@@ -1,1 +1,11 @@
 decided_for,recorded_at,action,ticker,company,rank,score,reason,status,fill_date,fill_price,units,amount_gbp,costs_gbp
+2026-10-30,2026-10-30 17:07,Buy,CMCX.L,CMC Markets,1,2.1478,Rank 1 by 12-1 month price change,planned,,,,,
+2026-10-30,2026-10-30 17:07,Buy,SAGA.L,Saga,2,1.9306,Rank 2 by 12-1 month price change,planned,,,,,
+2026-10-30,2026-10-30 17:07,Buy,KLR.L,Keller Group,3,1.1729,Rank 3 by 12-1 month price change,planned,,,,,
+2026-10-30,2026-10-30 17:07,Buy,XPP.L,XP Power,4,0.996,Rank 4 by 12-1 month price change,planned,,,,,
+2026-10-30,2026-10-30 17:07,Buy,CCC.L,Computacenter,5,0.94,Rank 5 by 12-1 month price change,planned,,,,,
+2026-10-30,2026-10-30 17:07,Buy,WOSG.L,Watches of Switzerland,6,0.7499,Rank 6 by 12-1 month price change,planned,,,,,
+2026-10-30,2026-10-30 17:07,Buy,BGEO.L,Lion Finance Group,7,0.7422,Rank 7 by 12-1 month price change,planned,,,,,
+2026-10-30,2026-10-30 17:07,Buy,COST.L,Costain Group,8,0.7209,Rank 8 by 12-1 month price change,planned,,,,,
+2026-10-30,2026-10-30 17:07,Buy,RSW.L,Renishaw,9,0.663,Rank 9 by 12-1 month price change,planned,,,,,
+2026-10-30,2026-10-30 17:07,Buy,EMG.L,Man Group,10,0.5761,Rank 10 by 12-1 month price change,planned,,,,,

@@ -12,6 +12,10 @@ on:
         description: "Only the first N shares (leave blank for all)"
         required: false
         default: ""
+      delay:
+        description: "Minutes of price delay to replay (0 = as before; 15 = like the live scanner's Yahoo prices)"
+        required: false
+        default: "0"
 
 permissions:
   contents: write
@@ -40,16 +44,20 @@ jobs:
       - name: Run backtest
         env:
           LIMIT: ${{ inputs.limit }}
+          DELAY: ${{ inputs.delay }}
         run: |
           EXTRA=""
           if [ -n "$LIMIT" ]; then EXTRA="--limit $LIMIT"; fi
-          python -u ftse_feasibility_backtest.py $EXTRA --out results/ftse_feasibility.xlsx
+          if [ -n "$DELAY" ] && [ "$DELAY" != "0" ]; then OUT=results/ftse_feasibility_delay${DELAY}.xlsx; else DELAY=0; OUT=results/ftse_feasibility.xlsx; fi
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+          python -u ftse_feasibility_backtest.py $EXTRA --data-delay "$DELAY" --out "$OUT"
 
       - name: Save results to the repo
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
-          git add results/ftse_feasibility.xlsx results/ftse_feasibility.json results/ftse_feasibility_trades.csv
+          BASE="${OUT%.xlsx}"
+          git add "$OUT" "$BASE.json" "${BASE}_trades.csv"
           if git diff --cached --quiet; then echo "Nothing new to save."; exit 0; fi
           git commit -m "Feasibility backtest $(TZ=Europe/London date '+%Y-%m-%d %H:%M')"
           for attempt in 1 2 3; do

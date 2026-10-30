@@ -1,0 +1,92 @@
+{
+ "generated": "2026-10-30 22:53",
+ "verdict": [
+  "FTSE 100, 2026-08-25 to 2026-10-30 (48 trading days), 15-minute data delay on; split at 2026-09-29.",
+  "B. At most 2 new trades per scan: helped in one half only, still loses money (average per trade \u00a3-0.14 v \u00a3-0.15; 353 trades)",
+  "C. At most 1 new trade per scan: did not help, still loses money (average per trade \u00a3-0.17 v \u00a3-0.15; 347 trades)",
+  "D. At most 2 new trades in the same direction per scan: did not help, still loses money (average per trade \u00a3-0.19 v \u00a3-0.15; 345 trades)",
+  "E. At most 3 trades open in the same direction at once: did not help, still loses money (average per trade \u00a3-0.22 v \u00a3-0.15; 358 trades)"
+ ],
+ "variants": [
+  {
+   "Rules": "A. Current rules",
+   "Trades": 359,
+   "Trades a day": 7.479166666666667,
+   "Skipped at the fill": 112,
+   "Won after costs": 0.3426183844011142,
+   "Stop hit": 0.5125348189415042,
+   "Average per \u00a3100 trade (\u00a3)": -0.14735376044568246,
+   "Total (\u00a3)": -52.900000000000006,
+   "First half: average (\u00a3)": -0.15653409090909093,
+   "Second half: average (\u00a3)": -0.13852459016393442,
+   "First half: total (\u00a3)": -27.550000000000004,
+   "Second half: total (\u00a3)": -25.349999999999998,
+   "Filled at 08:45": 0.5181058495821727,
+   "Filled after 12:00": 0.10584958217270195
+  },
+  {
+   "Rules": "B. At most 2 new trades per scan",
+   "Trades": 353,
+   "Trades a day": 7.354166666666667,
+   "Skipped at the fill": 122,
+   "Won after costs": 0.34560906515580736,
+   "Stop hit": 0.5552407932011332,
+   "Average per \u00a3100 trade (\u00a3)": -0.14441926345609063,
+   "Total (\u00a3)": -50.98,
+   "First half: average (\u00a3)": -0.11379518072289158,
+   "Second half: average (\u00a3)": -0.17160427807486628,
+   "First half: total (\u00a3)": -18.89,
+   "Second half: total (\u00a3)": -32.089999999999996,
+   "Filled at 08:45": 0.1954674220963173,
+   "Filled after 12:00": 0.09348441926345609
+  },
+  {
+   "Rules": "C. At most 1 new trade per scan",
+   "Trades": 347,
+   "Trades a day": 7.229166666666667,
+   "Skipped at the fill": 123,
+   "Won after costs": 0.30835734870317005,
+   "Stop hit": 0.5821325648414986,
+   "Average per \u00a3100 trade (\u00a3)": -0.169193083573487,
+   "Total (\u00a3)": -58.709999999999994,
+   "First half: average (\u00a3)": -0.18957317073170732,
+   "Second half: average (\u00a3)": -0.15092896174863388,
+   "First half: total (\u00a3)": -31.09,
+   "Second half: total (\u00a3)": -27.62,
+   "Filled at 08:45": 0.09798270893371758,
+   "Filled after 12:00": 0.12680115273775217
+  },
+  {
+   "Rules": "D. At most 2 new trades in the same direction per scan",
+   "Trades": 345,
+   "Trades a day": 7.1875,
+   "Skipped at the fill": 129,
+   "Won after costs": 0.3159420289855073,
+   "Stop hit": 0.5652173913043478,
+   "Average per \u00a3100 trade (\u00a3)": -0.1949855072463768,
+   "Total (\u00a3)": -67.27,
+   "First half: average (\u00a3)": -0.19376543209876543,
+   "Second half: average (\u00a3)": -0.19606557377049183,
+   "First half: total (\u00a3)": -31.39,
+   "Second half: total (\u00a3)": -35.88,
+   "Filled at 08:45": 0.391304347826087,
+   "Filled after 12:00": 0.10144927536231885
+  },
+  {
+   "Rules": "E. At most 3 trades open in the same direction at once",
+   "Trades": 358,
+   "Trades a day": 7.458333333333333,
+   "Skipped at the fill": 114,
+   "Won after costs": 0.31843575418994413,
+   "Stop hit": 0.5586592178770949,
+   "Average per \u00a3100 trade (\u00a3)": -0.21723463687150837,
+   "Total (\u00a3)": -77.77,
+   "First half: average (\u00a3)": -0.2748275862068965,
+   "Second half: average (\u00a3)": -0.16277173913043477,
+   "First half: total (\u00a3)": -47.81999999999999,
+   "Second half: total (\u00a3)": -29.95,
+   "Filled at 08:45": 0.4860335195530726,
+   "Filled after 12:00": 0.11452513966480447
+  }
+ ]
+}

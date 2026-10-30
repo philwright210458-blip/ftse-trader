@@ -67,7 +67,7 @@ def still_open(progress_rows: list[dict]) -> int:
 def record_live_mock(data_dir: Path, info, candidates, max_per_day: int = DEFAULT_MAX_PER_DAY,
                      last_entry: str = DEFAULT_LAST_ENTRY, max_per_scan: int | None = None,
                      max_open: int | None = None, open_now: int = 0, not_entered: int = 0,
-                     skipped_tickers: list[str] | None = None) -> list[dict]:
+                     skipped_tickers: list[str] | None = None, no_breakouts_before: str | None = None) -> list[dict]:
     """Enter new live mock trades from this scan. Returns the rows added.
 
     `info` is the scanner's RunInfo; `candidates` are this scan's non-conflicting
@@ -98,6 +98,8 @@ def record_live_mock(data_dir: Path, info, candidates, max_per_day: int = DEFAUL
     for setup in sorted(candidates, key=lambda s: (getattr(s, "picker_agrees", False), s.quality_score), reverse=True):
         if setup.conflict or getattr(setup, "stale", False) or setup.ticker in taken:
             continue
+        if no_breakouts_before and setup.setup_type == "Breakout" and run_clock < no_breakouts_before:
+            continue                        # setting (30 Oct 2026): no breakouts from the opening scans
         taken.add(setup.ticker)
         rows.append({
             "day": info.day, "signal_time": info.run_time, "data_time": data_time, "mode": info.mode,
@@ -143,13 +145,15 @@ def mock_progress(row: dict, data: pd.DataFrame | None, minutes: int = 15,
         signal = max(signal, market_stamp(row["data_time"]) + pd.Timedelta(minutes=minutes))
     observed = market_stamp(now) if now is not None else market_stamp(data.index.max()) + pd.Timedelta(minutes=minutes)
     planned = float(row["entry"]) if str(row.get("entry", "")).strip() else None
+    import ftse_settings
     sim = simulate(row["direction"], float(row["stop"]), float(row["target"]), signal, data, 1,
-                   observed, f"{minutes}m", planned_entry=planned)
+                   observed, f"{minutes}m", planned_entry=planned, **ftse_settings.chase_kwargs(ftse_settings.load()))
     if math.isfinite(sim.fill):
         result["fill"] = round(sim.fill, 2)
     if sim.status == "skipped":
         result["status"] = {"gap": "Skipped: opened past the stop or target",
-                            "thin_stop": "Skipped: stop too close at entry"}.get(sim.outcome, "Skipped: outside entry rules")
+                            "thin_stop": "Skipped: stop too close at entry",
+                            "chased": "Skipped: entry too far past the 9 EMA"}.get(sim.outcome, "Skipped: outside entry rules")
         return result
     if sim.state == "waiting":
         return result

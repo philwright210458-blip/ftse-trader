@@ -1,0 +1,9 @@
+{
+  "_about": "Live scanner settings (30 Oct 2026). Everything here is OFF by default; switch a setting on only with Phil's agreement, and note the date in 'changed'. See ftse_settings.py for what each one does.",
+  "ignore_partial_candles": false,
+  "data_delay_minutes": 15,
+  "chase_limit_pct": null,
+  "chase_from": null,
+  "no_breakouts_before": null,
+  "changed": "2026-10-30: file added, all settings off"
+}

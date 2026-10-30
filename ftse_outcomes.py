@@ -164,6 +164,8 @@ def evaluate_pending(rows: pd.DataFrame, cache: pd.DataFrame, horizons: list[int
             if (row["key"], horizon) not in done:
                 work.setdefault(row["ticker"], []).append((row, horizon))
     now = pd.Timestamp.now(tz=sc.UK_TZ)
+    import ftse_settings
+    chase = ftse_settings.chase_kwargs(ftse_settings.load())
     new_rows, pending, failed = [], 0, 0
     total = len(work)
     for number, (ticker, items) in enumerate(work.items(), 1):
@@ -181,7 +183,7 @@ def evaluate_pending(rows: pd.DataFrame, cache: pd.DataFrame, horizons: list[int
             signal_close = market_stamp(row["data_time"]) + pd.Timedelta(minutes=minutes)
             available = max(signal_close, market_stamp(row["run_time"]))
             sim = simulate(row["direction"], row["stop"], row["target"], available, data, horizon, now, interval,
-                           daily=daily, planned_entry=row.get("entry"))
+                           daily=daily, planned_entry=row.get("entry"), **chase)
             if sim.status == "pending":
                 pending += 1
                 continue

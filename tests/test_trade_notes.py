@@ -1,3 +1,4 @@
+import types
 import tempfile
 import unittest
 from pathlib import Path
@@ -218,6 +219,19 @@ class ZoneAgeTests(unittest.TestCase):
         self.assertEqual(row["zone_touches"], 3)
         self.assertEqual(row["zone_formed_today"], "Yes")
         self.assertEqual(row["zone_age_minutes"], 25 * 15)                  # 09:15 to the 15:15 candle, inclusive
+
+
+class ZoneDensityTests(unittest.TestCase):
+    def test_near_and_between(self):
+        zone = lambda mid: types.SimpleNamespace(mid=mid)
+        zones = [zone(m) for m in (98.0, 99.5, 100.5, 101.0, 102.5, 104.0)]
+        self.assertEqual(tn.zone_density(zones, 100.0, 103.0), (3, 3))     # near: 99.5, 100.5, 101; between: 100.5, 101, 102.5
+        self.assertEqual(tn.zone_density(zones, 100.0, 97.0), (3, 2))      # a sell: between 97 and 100 = 98, 99.5
+
+    def test_real_wave_has_its_zone(self):
+        frame = ZoneAgeTests().wave()
+        zones = tn.zones_at(frame, pd.Timestamp(f"{DAY} 16:00", tz=UK))
+        self.assertGreaterEqual(tn.zone_density(zones, 100.0, 101.0)[0], 1)
 
 
 class FourHourTests(unittest.TestCase):

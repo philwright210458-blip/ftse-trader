@@ -81,7 +81,8 @@ def market_stamp(value) -> pd.Timestamp:
 
 def simulate(side: str, stop: float, target: float, signal_close: pd.Timestamp,
              data: pd.DataFrame, horizon: int, now: pd.Timestamp, interval: str = "15m",
-             daily: pd.DataFrame | None = None, planned_entry: float | None = None) -> Sim:
+             daily: pd.DataFrame | None = None, planned_entry: float | None = None,
+             chase_limit_pct: float | None = None, chase_from: str | None = None) -> Sim:
     """Conservative completed-bar simulation from actual signal availability.
 
     `signal_close` is the later of the signal candle close and scan availability.
@@ -139,6 +140,15 @@ def simulate(side: str, stop: float, target: float, signal_close: pd.Timestamp,
             and abs(fill - stop) < FILL_CHECK_ROOM * abs(planned - stop)):
         # The open is known as the candle starts, so the place is freed at the fill time.
         return Sim("skipped", "thin_stop", fill=fill, observed_at=first.isoformat())
+    if chase_limit_pct is not None and chase_from and available.date().isoformat() >= chase_from:
+        # Chase check (setting, from 30 Oct 2026): skip a fill too far beyond the 9 EMA in the trade's direction,
+        # measured on the candles completed before the entry candle.
+        closes = complete.loc[complete.index < first, "close"].astype(float)
+        if len(closes) >= 9:
+            ema = float(closes.ewm(span=9, adjust=False).mean().iloc[-1])
+            beyond = (fill - ema) / ema * 100 * (1 if side == "Long" else -1)
+            if beyond > chase_limit_pct:
+                return Sim("skipped", "chased", fill=fill, observed_at=first.isoformat())
     risk = abs(fill - stop)
     risk_pct = risk / fill * 100
 

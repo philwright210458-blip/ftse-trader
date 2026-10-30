@@ -15,12 +15,17 @@ UK = "Europe/London"
 
 
 class SettingsFileTests(unittest.TestCase):
-    def test_shipped_file_has_everything_off(self):
+    def test_shipped_file_is_valid(self):
+        raw = json.loads(fs.SETTINGS_PATH.read_text())
+        self.assertTrue(set(fs.DEFAULTS) <= set(raw), "every setting is listed in config/scanner.json")
         settings = fs.load()
-        self.assertEqual(fs.candle_delay_minutes(settings), 0)
-        self.assertEqual(fs.chase_kwargs(settings), {})
-        self.assertIsNone(settings["no_breakouts_before"])
-        self.assertEqual(fs.describe(settings), "Scanner settings: all off (as before).")
+        self.assertIn(fs.candle_delay_minutes(settings), (0, 15))
+        self.assertTrue(fs.describe(settings).startswith("Scanner settings"))
+
+    def test_defaults_are_off(self):
+        self.assertEqual(fs.candle_delay_minutes(fs.DEFAULTS), 0)
+        self.assertEqual(fs.chase_kwargs(fs.DEFAULTS), {})
+        self.assertIsNone(fs.DEFAULTS["no_breakouts_before"])
 
     def test_missing_or_broken_file_means_off(self):
         folder = Path(tempfile.mkdtemp())

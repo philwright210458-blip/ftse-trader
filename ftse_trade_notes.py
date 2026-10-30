@@ -23,9 +23,14 @@ The trade-feasibility bundle (assessed between the signal and the mock entry):
   zone_age_minutes, zone_formed_today,
   zone_touches ....................... trading minutes from the zone's first touch to the signal candle,
                                        whether every touch was that day, and the number of touches
+  zones_near, zones_between .......... zone density (from 30 Oct 2026): how many of the scanner's zones sat
+                                       within 1.2% of the fill, and how many between the fill and the target
+  ema_chase_pct ...................... "chasing": the fill's distance beyond the 9 EMA in the trade's
+                                       direction, % (+ = above for a buy, below for a sell)
 
 Skipped trades (from 30 Oct 2026): a trade the fill check skipped (too little room to the stop at the entry
-price) is noted too, with entered = "No: fill check", net_gbp left empty, and counterfactual_result /
+price) or the chase check skipped (a setting, off unless switched on) is noted too, with entered = "No: fill
+check" or "No: chase check", net_gbp left empty, and counterfactual_result /
 counterfactual_gbp saying what it would have done had it been entered. So the review can tell whether the
 fill check removes losers or cuts winners. Totals of real results must use entered = "Yes" rows only.
 
@@ -59,6 +64,8 @@ from ftse_execution import completed_candles, drop_untraded_bars, simulate
 from ftse_picker import load_views
 
 NOTES_FILE = "trade_notes.csv"
+SKIP_REASONS = {"thin_stop": ("No: fill check", "skipped: thin stop"),
+                "chased": ("No: chase check", "skipped: too far past the 9 EMA")}
 STAKE, COST_PCT = 100.0, 0.10
 MAX_AGE_DAYS = 55                  # Yahoo keeps 15-minute candles for about 60 days
 FLAT_GAP_PCT = 0.05                # 9 EMA within 0.05% of the 20 SMA = flat (Admiral 29 Oct: 0.03%)
@@ -68,6 +75,7 @@ SMA_4H_BARS = 200
 NEAR_AVERAGE_PCT = 1.0             # within 1% of the daily 50-day and 4-hour 200 SMA = no higher-timeframe trend
 EXTREME_CANDLE = 4.0               # a wick 4x the median candle range of the 20 before entry
 VOLUME_SPIKE = 5.0                 # a candle's volume 5x the average of the 20 before it
+NEAR_ZONE_PCT = 1.2                # zone density: zones within 1.2% of the fill
 NEWS_WORDS = re.compile(r"result|trading update|update|statement|production|report|profit warning|guidance|"
                         r"takeover|offer|bid|ex-dividend|agm|capital markets|announcement", re.IGNORECASE)
 
@@ -76,7 +84,7 @@ COLUMNS = [
     "signal_time", "fill_time", "exit_time", "minutes_held",
     "entered", "counterfactual_result", "counterfactual_gbp",
     "planned_entry", "fill", "stop", "target", "exit_price", "zone_low", "zone_high",
-    "zone_age_minutes", "zone_formed_today", "zone_touches",
+    "zone_age_minutes", "zone_formed_today", "zone_touches", "zones_near", "zones_between",
     # trade feasibility
     "planned_stop_pct", "fill_stop_pct", "fill_room_pct", "fill_room_band", "stop_pretested",
     "target_pct", "typical_range_pct", "target_vs_daily_range",
@@ -85,7 +93,7 @@ COLUMNS = [
     # context
     "news_day", "picker_view", "picker_reason", "gap_pct",
     "higher_tf_state", "daily_trend", "daily_vs_sma50_pct", "trend_4h", "vs_4h_sma200_pct", "trends_agreeing",
-    "ema9", "sma20", "ema9_sma20_gap_pct", "sma20_slope_pct", "fill_vs_ema9_pct", "signal_volume_ratio",
+    "ema9", "sma20", "ema9_sma20_gap_pct", "sma20_slope_pct", "fill_vs_ema9_pct", "ema_chase_pct", "signal_volume_ratio",
     # what happened
     "mfe_pct", "mae_pct", "close_1630", "close_outcome_gbp", "data_quality_flag", "noted_at",
 ]
@@ -203,18 +211,32 @@ def quality_flags(direction: str, result: str, stop: float, held: pd.DataFrame, 
     return flags
 
 
+def zones_at(frame: pd.DataFrame, signal_candle: pd.Timestamp, index_label: str = "FTSE 100") -> list:
+    """Every qualified zone the scanner would see at the signal, from the candles completed by then."""
+    cfg = sc.INDEX_RULES.get(index_label, sc.INDEX_RULES["FTSE 100"])
+    visible = frame[frame.index <= signal_candle]
+    if len(visible) <= cfg.swing_lookback * 2:
+        return []
+    return sc.qualify_zones(sc.cluster_zones(sc.find_swing_points(visible, cfg.swing_lookback), cfg.zone_tolerance_pct),
+                            visible, cfg)
+
+
+def zone_density(zones: list, fill: float, target: float) -> tuple[int, int]:
+    """Zones whose middle is within NEAR_ZONE_PCT of the fill, and zones whose middle lies between fill and target."""
+    low, high = min(fill, target), max(fill, target)
+    near = sum(abs(z.mid - fill) / fill * 100 <= NEAR_ZONE_PCT for z in zones)
+    between = sum(low < z.mid < high for z in zones)
+    return near, between
+
+
 def zone_history(frame: pd.DataFrame, signal_candle: pd.Timestamp, low: float | None, high: float | None,
-                 index_label: str = "FTSE 100") -> tuple[pd.Timestamp | None, int]:
+                 index_label: str = "FTSE 100", zones: list | None = None) -> tuple[pd.Timestamp | None, int]:
     """First touch time and touch count of the scanner's zone, rebuilt from the candles completed by the signal
     with the scanner's own zone rules. (None, 0) if the zone cannot be matched."""
     if low is None or high is None or not (math.isfinite(low) and math.isfinite(high)):
         return None, 0
-    cfg = sc.INDEX_RULES.get(index_label, sc.INDEX_RULES["FTSE 100"])
-    visible = frame[frame.index <= signal_candle]
-    if len(visible) <= cfg.swing_lookback * 2:
-        return None, 0
-    zones = sc.qualify_zones(sc.cluster_zones(sc.find_swing_points(visible, cfg.swing_lookback), cfg.zone_tolerance_pct),
-                             visible, cfg)
+    if zones is None:
+        zones = zones_at(frame, signal_candle, index_label)
     tolerance = max(abs(high), abs(low)) * 0.0005
     for zone in zones:
         if abs(zone.low - low) <= tolerance and abs(zone.high - high) <= tolerance and zone.touches:
@@ -334,10 +356,13 @@ def note_trade(trade: dict, outcome: dict, m15: pd.DataFrame, daily: pd.DataFram
             zone_low, zone_high = float(mine["zone_low"].iloc[0]), float(mine["zone_high"].iloc[0])
         other = same_share[same_share["direction"] != direction]
         flips = int(sum(signal_time - FLIP_WINDOW <= uk(t) <= signal_time for t in other["run_time"]))
+    every_zone = zones_at(frame, signal_candle, str(trade.get("index") or "FTSE 100"))
     if zone_info is not None:
         zone_low, zone_high, first_touch, touches = zone_info
     else:
-        first_touch, touches = zone_history(frame, signal_candle, zone_low, zone_high, str(trade.get("index") or "FTSE 100"))
+        first_touch, touches = zone_history(frame, signal_candle, zone_low, zone_high, str(trade.get("index") or "FTSE 100"),
+                                            zones=every_zone)
+    zones_near, zones_between = zone_density(every_zone, fill, target)
     place, margin = zone_position(direction, fill, zone_low, zone_high)
     zone_age, zone_today = None, ""
     if first_touch is not None:
@@ -364,6 +389,7 @@ def note_trade(trade: dict, outcome: dict, m15: pd.DataFrame, daily: pd.DataFram
         "planned_entry": _r(planned, 4), "fill": _r(fill, 4), "stop": _r(stop, 4), "target": _r(target, 4),
         "exit_price": _r(exit_price, 4), "zone_low": _r(zone_low, 4), "zone_high": _r(zone_high, 4),
         "zone_age_minutes": zone_age, "zone_formed_today": zone_today, "zone_touches": touches or None,
+        "zones_near": zones_near, "zones_between": zones_between,
         "entered": "Yes",
         "planned_stop_pct": _r(planned_room), "fill_stop_pct": _r(fill_room),
         "fill_room_pct": _r(kept, 0), "fill_room_band": room_band(kept), "stop_pretested": pretested,
@@ -377,7 +403,8 @@ def note_trade(trade: dict, outcome: dict, m15: pd.DataFrame, daily: pd.DataFram
         "higher_tf_state": higher, "daily_trend": d_trend, "daily_vs_sma50_pct": _r(d_pct),
         "trend_4h": h4_trend, "vs_4h_sma200_pct": _r(h4_pct), "trends_agreeing": agreeing,
         "ema9": _r(e, 4), "sma20": _r(s, 4), "ema9_sma20_gap_pct": _r(gap, 3), "sma20_slope_pct": _r(slope, 3),
-        "fill_vs_ema9_pct": _r((fill - e) / e * 100), "signal_volume_ratio": _r(vol_ratio, 1),
+        "fill_vs_ema9_pct": _r((fill - e) / e * 100), "ema_chase_pct": _r(sign * (fill - e) / e * 100),
+        "signal_volume_ratio": _r(vol_ratio, 1),
         "mfe_pct": _r(mfe), "mae_pct": _r(mae), "close_1630": _r(close_1630, 4), "close_outcome_gbp": _r(hold),
         "data_quality_flag": "; ".join(flags),
     }
@@ -391,7 +418,7 @@ def completed_trades(data_dir: Path) -> pd.DataFrame:
     trades = pd.read_csv(trades_path, dtype={"day": str})
     outcomes = pd.read_csv(outcomes_path, dtype={"day": str})
     done = outcomes["status"] == "done"
-    skipped = (outcomes["status"] == "skipped") & (outcomes["outcome"] == "thin_stop")
+    skipped = (outcomes["status"] == "skipped") & (outcomes["outcome"].isin(SKIP_REASONS))
     outcomes = outcomes[done | skipped][["key", "status", "outcome", "fill", "exit_price", "exit_time"]]
     merged = trades.merge(outcomes, on="key", how="inner")
     return merged[(merged["status"] == "skipped") | merged[["fill", "exit_price", "exit_time"]].notna().all(axis=1)]
@@ -434,8 +461,9 @@ def build_notes(todo: pd.DataFrame, m15: dict, daily: dict, hourly: dict, data_d
                                  setups[setups["day"].astype(str) == day] if len(setups) else setups,
                                  load_views(data_dir, day))
             if row is not None and was_skipped:
-                row.update({"entered": "No: fill check", "counterfactual_result": row["result"],
-                            "counterfactual_gbp": row["net_gbp"], "result": "skipped: thin stop", "net_gbp": None})
+                entered, result = SKIP_REASONS.get(str(trade.get("outcome")), SKIP_REASONS["thin_stop"])
+                row.update({"entered": entered, "counterfactual_result": row["result"],
+                            "counterfactual_gbp": row["net_gbp"], "result": result, "net_gbp": None})
         if row is None:
             missed.append(f"{day} {ticker}")
             continue

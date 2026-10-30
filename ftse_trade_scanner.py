@@ -847,7 +847,7 @@ def save_workbook(workbook: Workbook, path: Path) -> Path:
 # ----------------------------------------------------------------------
 
 def run_scan(universe: list[Constituent], interval: str, period: str, delay: float, batch: bool = False,
-             target_cap_pct: float = TARGET_CAP_PCT, target_cap_days: int = TARGET_CAP_DAYS):
+             target_cap_pct: float = TARGET_CAP_PCT, target_cap_days: int = TARGET_CAP_DAYS, data_delay_minutes: int = 0):
     all_setups: list[TradeSetup] = []
     failures: list[str] = []
     latest: pd.Timestamp | None = None
@@ -865,7 +865,10 @@ def run_scan(universe: list[Constituent], interval: str, period: str, delay: flo
             lag = candle_lag_minutes(raw, interval)
             if lag is not None:
                 lags.append(lag)
-            data = drop_untraded_bars(completed_candles(raw, interval))
+            # With data_delay_minutes (setting, from 30 Oct 2026) only candles that ended that long ago count as
+            # complete, so a part-formed candle from Yahoo's late prices is never used.
+            seen = pd.Timestamp.now(tz=UK_TZ) - pd.Timedelta(minutes=data_delay_minutes) if data_delay_minutes else None
+            data = drop_untraded_bars(completed_candles(raw, interval, seen))
             if len(data) <= cfg.swing_lookback * 2:
                 raise RuntimeError("Not enough completed candles")
             if latest is None or data.index[-1] > latest:
@@ -938,6 +941,8 @@ def main() -> None:
     args = parser.parse_args()
 
     data_dir, workbook_path = Path(args.data_dir), Path(args.out)
+    import ftse_settings
+    settings = ftse_settings.load()
     if args.refresh_mock:
         sys.exit(refresh_mock_workbook(data_dir, workbook_path, args.interval))
     runs = _read_table(data_dir / "runs.csv", RUN_COLUMNS)
@@ -972,7 +977,8 @@ def main() -> None:
 
     all_setups, failures, latest, lags = run_scan(universe, args.interval, args.period, args.delay,
                                                    batch=not args.one_by_one, target_cap_pct=args.target_cap_pct,
-                                                   target_cap_days=args.target_cap_days)
+                                                   target_cap_days=args.target_cap_days,
+                                                   data_delay_minutes=ftse_settings.candle_delay_minutes(settings))
     if latest is None:
         print("No usable data came back (market closed, or Yahoo unavailable). Nothing recorded.")
         sys.exit(1)
@@ -1024,7 +1030,8 @@ def main() -> None:
         open_now = still_open(progress_now) if args.live_max_open > 0 else 0
         live_rows = record_live_mock(data_dir, info, live_candidates, args.live_max_per_day,
                                      max_per_scan=args.live_max_per_scan, max_open=args.live_max_open, open_now=open_now,
-                                     not_entered=skipped_at_entry(progress_now), skipped_tickers=skipped_tickers(progress_now))
+                                     not_entered=skipped_at_entry(progress_now), skipped_tickers=skipped_tickers(progress_now),
+                                     no_breakouts_before=settings.get("no_breakouts_before"))
     runs = _read_table(data_dir / "runs.csv", RUN_COLUMNS)
     setups_history = _read_table(data_dir / "setups.csv", SETUP_COLUMNS)
     mock_rows = todays_mock_trades(data_dir, info, args.interval)
@@ -1032,6 +1039,7 @@ def main() -> None:
                           workbook_path)
 
     print(f"\nScanned {len(universe)} companies ({mode}), data to {info.as_of} UK.")
+    print(ftse_settings.describe(settings))
     if stale_count:
         print(f"{stale_count} setup(s) excluded as stale (last trade more than {args.max_stale} min behind the freshest candle).")
     print(f"{len(all_setups) - stale_count} fresh setup(s) -> {len(selected)} after de-duplication; "

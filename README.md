@@ -31,6 +31,14 @@ Workflows run by hand from the Actions tab: **FTSE Feasibility Backtest** (FTSE 
 | Claude's model: monthly momentum | `ftse_momentum.py` (backtest), `ftse_momentum_live.py` (paper trading from 30 Oct 2026) | Paper trading |
 | Daily structure pullback (idea 24, Market Structure report) | `ftse_structure.py`, `ftse_structure_backtest.py`, `ftse_structure_live.py` (paper trading from 22 Oct 2026, £250 a trade, results in `ftse_structure_live.xlsx`) | Paper trading; backtests in progress |
 
+## Scanner settings (from 30 Oct 2026)
+
+`config/scanner.json` holds live scanner settings, all **off** by default (explained in `ftse_settings.py`):
+`ignore_partial_candles` (only use candles that ended `data_delay_minutes` ago, because Yahoo's London prices are
+about 15 minutes late), `chase_limit_pct` + `chase_from` (skip fills too far beyond the 9 EMA in the trade's
+direction) and `no_breakouts_before` (no breakout trades from scans before this time). Switch one on only with
+Phil's agreement and note the date in `changed`. Each scan prints which settings are on.
+
 ## Folders and files
 
 - `ftse_universe.csv`: the 350 shares (the `type` column marks investment trusts).

@@ -1,0 +1,59 @@
+# FTSE Scan Limit Backtest (plan step 2a): the live trader with limits on how many trades one scan can take
+# (see ftse_scan_limit_backtest.py). FTSE 100, 15-minute data delay. Run by hand from the Actions tab.
+# Saves results/ftse_scan_limits.xlsx and .json; does not touch the live scan history.
+
+name: FTSE Scan Limit Backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Only the first N shares (leave blank for all)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftse-backtest
+  cancel-in-progress: false
+
+jobs:
+  backtest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install packages
+        run: pip install -r requirements.txt
+
+      - name: Run backtest
+        env:
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          EXTRA=""
+          if [ -n "$LIMIT" ]; then EXTRA="--limit $LIMIT"; fi
+          python -u ftse_scan_limit_backtest.py $EXTRA --out results/ftse_scan_limits.xlsx
+
+      - name: Save results to the repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add results/ftse_scan_limits.xlsx results/ftse_scan_limits.json
+          if git diff --cached --quiet; then echo "Nothing new to save."; exit 0; fi
+          git commit -m "Scan limit backtest $(TZ=Europe/London date '+%Y-%m-%d %H:%M')"
+          for attempt in 1 2 3; do
+            git pull --rebase && git push && exit 0
+            sleep 15
+          done
+          echo "::error::Could not save results to the repo after 3 attempts."
+          exit 1

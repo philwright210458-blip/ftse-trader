@@ -28,6 +28,10 @@ create an edge the signal does not have. This backtest therefore asks four quest
      direction and (b) the same trade at a random time that day; 1,000 random versions of the whole set
      give the share of random versions that did as well as the scanner.
 
+Data delay (30 Oct 2026): a check of the live scans found that only 7% saw the newest candle; 62% saw the
+candle before it and 31% a part-formed candle, because Yahoo's London prices arrive about 15 minutes late.
+--data-delay 15 replays that: each scan sees only candles that ended at least 15 minutes earlier.
+
 Results: results/ftse_feasibility.xlsx (sheets Verdict, Rules, Self-search, Exits, Chance, Trades) and
 results/ftse_feasibility.json (for the results page). Paper research only: nothing changes live trading.
 
@@ -78,12 +82,13 @@ SEED = 29102026
 
 def share_setups(job) -> list[dict]:
     """As ftse_model_check_backtest.share_setups, also keeping the zone's touches and the typical range."""
-    company, data, cuts, interval_min = job
+    company, data, cuts, interval_min, delay_min = job
     step = pd.Timedelta(minutes=interval_min)
+    delay = pd.Timedelta(minutes=delay_min)
     ends = data.index + step
     found = []
     for cut in cuts:
-        visible = data[ends <= cut]
+        visible = data[ends <= cut - delay]
         cfg = sc.INDEX_RULES[company.index]
         if len(visible) <= cfg.swing_lookback * 2 or visible.index[-1].date() != cut.date():
             continue
@@ -100,12 +105,12 @@ def share_setups(job) -> list[dict]:
     return found
 
 
-def replay(universe, intraday, interval_min: int, warmup_days: int, workers: int) -> pd.DataFrame:
+def replay(universe, intraday, interval_min: int, warmup_days: int, workers: int, delay_min: int = 0) -> pd.DataFrame:
     """Every idea the live scanner would have offered at every scan (same steps as the model check replay)."""
     all_days = sorted({stamp.normalize() for data in intraday.values() for stamp in data.index})
     sessions = [day for day in all_days if is_session(day)][warmup_days:]
     cuts = [cut for day in sessions for cut in rb.scan_cuts(day)]
-    jobs = [(c, intraday[c.yahoo_ticker], cuts, interval_min) for c in universe if c.yahoo_ticker in intraday]
+    jobs = [(c, intraday[c.yahoo_ticker], cuts, interval_min, delay_min) for c in universe if c.yahoo_ticker in intraday]
     print(f"Replaying {len(cuts)} scans over {len(sessions)} days for {len(jobs)} shares ({workers} workers)...")
     raw = []
     with ProcessPoolExecutor(max_workers=workers) as pool:
@@ -530,7 +535,7 @@ def run(args) -> int:
     daily_raw = sc.fetch_many(tickers, "1d", "1y")
     daily = {t: tn.daily_by_date(f) for t, f in daily_raw.items()}
     closes4 = {t: tn.four_hour_closes(h) for t, h in hourly.items()}
-    ideas = replay(universe, intraday, 15, args.warmup_days, args.workers)
+    ideas = replay(universe, intraday, 15, args.warmup_days, args.workers, args.data_delay)
     if ideas.empty:
         print("No ideas passed the live rules.")
         return 1
@@ -584,7 +589,10 @@ def run(args) -> int:
 
     # verdict
     verdict = [f"FTSE 100 shares, {days[0]} to {days[-1]} ({len(days)} trading days), {len(table)} completed trades "
-               f"under the live rules; split at {split} into an earlier and a later half."]
+               f"under the live rules; split at {split} into an earlier and a later half."
+               + (f" Data delay: each scan sees only candles that ended at least {args.data_delay} minutes before it, as the "
+                  "live scanner does with Yahoo's delayed prices; the fill is still the next candle after the scan."
+                  if args.data_delay else "")]
     if chance:
         verdict.append(f"Chance test: the scanner made £{chance['scanner_total']:+.2f}. The same trades in a random direction "
                        f"averaged £{chance['random_direction_average_total']:+.2f}; {chance['random_direction_as_good']:.0%} of random "
@@ -676,6 +684,8 @@ def main() -> None:
     parser.add_argument("--warmup-days", type=int, default=12)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--workers", type=int, default=os.cpu_count() or 2)
+    parser.add_argument("--data-delay", type=int, default=0,
+                        help="minutes of price delay to replay (live Yahoo prices are ~15 minutes late; 30 Oct check)")
     parser.add_argument("--out", default="results/ftse_feasibility.xlsx")
     sys.exit(run(parser.parse_args()))
 

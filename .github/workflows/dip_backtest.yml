@@ -1,0 +1,51 @@
+# FTSE Dip Method Backtest: Phil's own early-2000s method (plan step 3a, ftse_dip_backtest.py).
+# Buy a 3% slide in a big FTSE 100 share after it turns up, sell at +3% or after a week. Run by hand.
+# Saves results/ftse_dip_method.xlsx / .json / _trades.csv; does not touch the live scans.
+
+name: FTSE Dip Method Backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "Ignore prices before this date, YYYY-MM-DD"
+        required: false
+        default: "2005-01-01"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftse-backtest
+  cancel-in-progress: false
+
+jobs:
+  backtest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install packages
+        run: pip install -r requirements.txt
+      - name: Run backtest
+        env:
+          START: ${{ inputs.start }}
+        run: python -u ftse_dip_backtest.py --start "${START:-2005-01-01}" --out results/ftse_dip_method.xlsx
+      - name: Save results to the repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add results/ftse_dip_method.xlsx results/ftse_dip_method.json results/ftse_dip_method_trades.csv
+          if git diff --cached --quiet; then echo "Nothing new to save."; exit 0; fi
+          git commit -m "Dip method backtest $(TZ=Europe/London date '+%Y-%m-%d %H:%M')"
+          for attempt in 1 2 3; do
+            git pull --rebase && git push && exit 0
+            sleep 15
+          done
+          exit 1

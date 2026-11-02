@@ -60,6 +60,7 @@ import ftse_outcomes as out
 import ftse_risk_backtest as rb
 import ftse_trade_notes as tn
 import ftse_trade_scanner as sc
+import ftse_zones as zb
 from ftse_picker import load_views
 from ftse_sessions import is_session
 
@@ -82,7 +83,8 @@ SEED = 29102026
 
 def share_setups(job) -> list[dict]:
     """As ftse_model_check_backtest.share_setups, also keeping the zone's touches and the typical range."""
-    company, data, cuts, interval_min, delay_min = job
+    company, data, cuts, interval_min, delay_min = job[:5]
+    zone_rules = job[5] if len(job) > 5 else None
     step = pd.Timedelta(minutes=interval_min)
     delay = pd.Timedelta(minutes=delay_min)
     ends = data.index + step
@@ -92,25 +94,28 @@ def share_setups(job) -> list[dict]:
         cfg = sc.INDEX_RULES[company.index]
         if len(visible) <= cfg.swing_lookback * 2 or visible.index[-1].date() != cut.date():
             continue
-        zones = sc.qualify_zones(sc.cluster_zones(sc.find_swing_points(visible, cfg.swing_lookback), cfg.zone_tolerance_pct),
-                                 visible, cfg)
+        zones = zb.build_zones(visible, cfg, zone_rules)
         setups = sc.build_setups(company.company, company.yahoo_ticker, company.index, visible, zones, cfg)
+        near = zb.zones_near(zones, float(visible["close"].iloc[-1]))
         atr = sc.typical_true_range(visible)
         for setup in setups:
             setup.kind, setup.last_trade = company.kind, visible.index[-1] + step
             sc.cap_target(setup, visible)
             setup.filter_note = sc.entry_rule_note(setup, visible)
             first = min(point.ts for point in setup.zone.touches) if setup.zone.touches else None
-            found.append({"cut": cut, "setup": setup, "atr": atr, "first_touch": first})
+            found.append({"cut": cut, "setup": setup, "atr": atr, "first_touch": first,
+                          "zones_at_scan": len(zones), "zones_near_at_scan": near})
     return found
 
 
-def replay(universe, intraday, interval_min: int, warmup_days: int, workers: int, delay_min: int = 0) -> pd.DataFrame:
+def replay(universe, intraday, interval_min: int, warmup_days: int, workers: int, delay_min: int = 0,
+           zone_rules: dict | None = None) -> pd.DataFrame:
     """Every idea the live scanner would have offered at every scan (same steps as the model check replay)."""
     all_days = sorted({stamp.normalize() for data in intraday.values() for stamp in data.index})
     sessions = [day for day in all_days if is_session(day)][warmup_days:]
     cuts = [cut for day in sessions for cut in rb.scan_cuts(day)]
-    jobs = [(c, intraday[c.yahoo_ticker], cuts, interval_min, delay_min) for c in universe if c.yahoo_ticker in intraday]
+    jobs = [(c, intraday[c.yahoo_ticker], cuts, interval_min, delay_min, zone_rules)
+            for c in universe if c.yahoo_ticker in intraday]
     print(f"Replaying {len(cuts)} scans over {len(sessions)} days for {len(jobs)} shares ({workers} workers)...")
     raw = []
     with ProcessPoolExecutor(max_workers=workers) as pool:
@@ -142,7 +147,8 @@ def replay(universe, intraday, interval_min: int, warmup_days: int, workers: int
                          "direction": s.direction, "score": s.quality_score, "entry": s.entry, "stop": s.stop,
                          "target": s.target, "stop_pct": abs(s.entry - s.stop) / s.entry * 100,
                          "zone_low": s.zone.low, "zone_high": s.zone.high, "zone_touches": s.zone.touch_count,
-                         "first_touch": info.get("first_touch"), "atr": info.get("atr")})
+                         "first_touch": info.get("first_touch"), "atr": info.get("atr"),
+                         "zones_at_scan": info.get("zones_at_scan"), "zones_near_at_scan": info.get("zones_near_at_scan")})
     return pd.DataFrame(rows)
 
 

@@ -1,0 +1,65 @@
+{
+ "generated": "2026-11-02 22:43",
+ "verdict": [
+  "Daily structure pullback, 93 FTSE 100 shares, 2006-10-23 to 2026-11-02, \u00a3250 a trade, IG share dealing costs \u00a31.50; split at 2016-12-06. Random days = the same share, same year, same stop distance, 2x target and 60-day limit, 2000 draws. Pass: random days as good under 5% of the time in both halves AND positive after costs in both halves.",
+  "A. As now (2x-the-stop target): does not pass. 135 trades; before costs \u00a3+3.83 per \u00a3250 v \u00a3+5.88 for random days; after costs \u00a3+2.33 (first half \u00a3+2.69, second \u00a3+1.97); random days as good 85% of the time (first half 81%, second 72%).",
+  "B. Dividends added: does not pass. 135 trades; before costs \u00a3+4.54 per \u00a3250 v \u00a3+6.44 for random days; after costs \u00a3+3.04 (first half \u00a3+3.52, second \u00a3+2.58); random days as good 83% of the time (first half 79%, second 72%).",
+  "C. No chasing (skip a gap of more than 1 typical daily range): does not pass. 135 trades; before costs \u00a3+3.83 per \u00a3250 v \u00a3+5.90 for random days; after costs \u00a3+2.33 (first half \u00a3+2.69, second \u00a3+1.97); random days as good 86% of the time (first half 81%, second 74%)."
+ ],
+ "variants": [
+  {
+   "Variant": "A. As now (2x-the-stop target)",
+   "Trades": 135,
+   "Trades a year": 6.75,
+   "Target hit": 0.3925925925925926,
+   "Stop hit": 0.5333333333333333,
+   "Avg stop distance": 0.06077777777777778,
+   "Avg days held": 20.83703703703704,
+   "Before costs per \u00a3250 (\u00a3)": 3.8287407407407414,
+   "Random days, before costs (\u00a3)": 5.882988534840989,
+   "After costs per \u00a3250 (\u00a3)": 2.328740740740741,
+   "After costs: first half (\u00a3)": 2.689701492537314,
+   "After costs: second half (\u00a3)": 1.9730882352941184,
+   "Random as good: whole": 0.8505,
+   "Random as good: first half": 0.812,
+   "Random as good: second half": 0.725,
+   "Years in profit": "11 of 20"
+  },
+  {
+   "Variant": "B. Dividends added",
+   "Trades": 135,
+   "Trades a year": 6.75,
+   "Target hit": 0.3925925925925926,
+   "Stop hit": 0.5333333333333333,
+   "Avg stop distance": 0.06077777777777778,
+   "Avg days held": 20.83703703703704,
+   "Before costs per \u00a3250 (\u00a3)": 4.542962962962963,
+   "Random days, before costs (\u00a3)": 6.435895062144445,
+   "After costs per \u00a3250 (\u00a3)": 3.0429629629629633,
+   "After costs: first half (\u00a3)": 3.5159701492537323,
+   "After costs: second half (\u00a3)": 2.5769117647058826,
+   "Random as good: whole": 0.831,
+   "Random as good: first half": 0.789,
+   "Random as good: second half": 0.717,
+   "Years in profit": "11 of 20"
+  },
+  {
+   "Variant": "C. No chasing (skip a gap of more than 1 typical daily range)",
+   "Trades": 135,
+   "Trades a year": 6.75,
+   "Target hit": 0.3925925925925926,
+   "Stop hit": 0.5333333333333333,
+   "Avg stop distance": 0.06077777777777778,
+   "Avg days held": 20.83703703703704,
+   "Before costs per \u00a3250 (\u00a3)": 3.8287407407407414,
+   "Random days, before costs (\u00a3)": 5.903776702677295,
+   "After costs per \u00a3250 (\u00a3)": 2.328740740740741,
+   "After costs: first half (\u00a3)": 2.689701492537314,
+   "After costs: second half (\u00a3)": 1.9730882352941184,
+   "Random as good: whole": 0.857,
+   "Random as good: first half": 0.812,
+   "Random as good: second half": 0.74,
+   "Years in profit": "11 of 20"
+  }
+ ]
+}

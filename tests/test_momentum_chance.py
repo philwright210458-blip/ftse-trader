@@ -42,6 +42,13 @@ class ChanceTests(unittest.TestCase):
         b = mm.run_model(open_, close, MARKET, mm.Settings(top=5, keep=10), rank_fn=mm.ranking)
         pd.testing.assert_series_equal(a.values, b.values)
 
+    def test_sticky_random_trades_less_than_fresh_random(self):
+        open_, close = prices([0.1] * 150, seed=9)
+        settings = mm.Settings(start="2010-03-01")
+        fresh = mm.run_model(open_, close, MARKET, settings, rank_fn=mc.random_ranker(np.random.default_rng(1), 1.0))
+        sticky = mm.run_model(open_, close, MARKET, settings, rank_fn=mc.random_ranker(np.random.default_rng(1), 0.05))
+        self.assertLess(len(sticky.trades), len(fresh.trades) / 2)
+
     def test_growth_and_luck(self):
         values = pd.Series([100.0, 121.0], index=pd.to_datetime(["2020-01-01", "2022-01-01"]))
         self.assertAlmostEqual(mc.growth(values, values.index[0], values.index[-1]), 0.1, places=3)
@@ -49,7 +56,7 @@ class ChanceTests(unittest.TestCase):
         self.assertIsNone(mc.luck(float("nan"), np.array([0.1])))
 
     def test_strong_momentum_beats_random_portfolios(self):
-        open_, close = prices([0.5] * 5 + [0.0] * 20, seed=5)
+        open_, close = prices([0.5] * 5 + [0.0] * 60, seed=5)
         row = mc.run_variant("test", {"start": "2010-03-01", "market_filter": True}, open_, close, MARKET, draws=20, seed=1)
         self.assertGreater(row["Model: growth a year"], row["Random portfolios: average growth a year"])
         self.assertLess(row["Random as good: whole"], 0.1)

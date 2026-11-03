@@ -1,6 +1,6 @@
 # FTSE Watch: scans every share again (from 22 Oct 2026; it used to re-check only
 # the 15 shares shortlisted at the full scan). Started every 15 minutes from 08:31
-# to 15:31 UK time (Mon-Fri) by a cron-job.org timer.
+# to 16:46 UK time (Mon-Fri) by a cron-job.org timer.
 #
 # If two runs see the same 15-minute candle, the scanner notices there's no new
 # candle and records nothing, so a doubled or late run does no harm.

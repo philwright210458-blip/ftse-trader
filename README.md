@@ -17,9 +17,8 @@ The timers are on cron-job.org; each one starts a GitHub workflow.
 | 07:06 | Morning picker (Claude scheduled task, not a GitHub workflow) | Reads overnight news and market mood; writes up to 10 FTSE 100 shares marked Buy or Sell, plus any to Avoid, to `scan_data/picker/<date>.csv`. From 26 Oct 2026 the scanner only labels ideas with the picker's view (agrees / opposes / avoid / no view); trades are unchanged until the research has been measured (`--picker filter` would let it skip and prioritise ideas, `--picker off` ignores it) | `scan_data/picker/` |
 | 08:31, then every 15 min to 15:31 | FTSE Watch (`watch.yml`) | Scans every share again; live mock trades (FTSE 100 shares only) at trigger points: every idea that passes the rules is taken, up to 5 open at once (a closed trade frees its slot), 10 a day, one per share | `ftse_scan_latest.xlsx`, `scan_data/live_mock_trades.csv` |
 | 17:05 | FTSE Outcomes (`outcomes.yml`) | Scores the live mock trades (sheet **Live Mock Trades**: one totals row with the comparison with every idea, then each completed trade from row 5; sheet **Daily**: running balance chart; sheet **Notes**: explanations); also runs the momentum and structure paper traders, and saves the trade notes (`scan_data/trade_notes.csv`: the trade-feasibility and autopsy checklist for every completed live mock trade; recorded features, not rules) | `ftse_outcomes.xlsx`, `ftse_momentum_live.xlsx`, `ftse_momentum_live_no_filter.xlsx`, `ftse_structure_live.xlsx` |
-| after each scan | Publish scans (`publish_scans.yml`) | Sends scan results to the shared dashboard | (dashboard) |
 
-Workflows run by hand from the Actions tab: **FTSE Momentum Chance Test** (plan step 6: the monthly momentum model against random portfolios under the same rules, with no-market-filter and from-2006 variants; `results/ftse_momentum_chance.xlsx`), **FTSE Structure Chance Test** (plan step 4a: the daily structure pullback's entries against buying the same shares on random days, FTSE 100 from 2006, with dividend and no-chasing variants; `results/ftse_structure_chance.xlsx`), **FTSE Zone Overhaul Backtest** (plan step 2: five ways of building fewer, stronger zones, each replayed through the live trader in parallel with the chance test; `results/ftse_zone_overhaul.xlsx`), **FTSE Dip Method Backtest** (plan step 3a: Phil's buy-a-3%-slide, sell-at-+3%-within-a-week method on six favourite FTSE 100 shares and on all FTSE 100, 2005 on, with dividends and a random-buying test; `results/ftse_dip_method.xlsx`), **FTSE Scan Limit Backtest** (plan step 2a: limits on how many trades one scan can take; `results/ftse_scan_limits.xlsx`), **FTSE Feasibility Backtest** (FTSE 100: feasibility rules, a self-search for improvements confirmed on unseen data, alternative exits, and a test against random entries; `results/ftse_feasibility.xlsx`), **FTSE Backtest**, **FTSE Range v2 Backtest** and **FTSE Momentum Backtest**. They save their workbooks in `results/`.
+Workflows run by hand from the Actions tab: **FTSE Momentum Chance Test** (plan step 6: the monthly momentum model against random portfolios under the same rules; `results/ftse_momentum_chance.xlsx`), **FTSE Momentum Backtest**, **FTSE Feasibility Backtest** (the 15-minute scanner replayed through the live trader with the chance test; `results/ftse_feasibility.xlsx`), **FTSE Entry Check Backtest**, **FTSE Model Check Backtest**, **FTSE Stop/Target Backtest**, **FTSE Backtest** and **FTSE MA-zone Daily Backtest**. They save their workbooks in `results/`. Finished experiments (zone overhaul, scan limits, dip method, structure chance test, day trader, range v2, MA trailing, data check) were removed on 3 Nov 2026; their results that the plan cites are still in `results/`, and the code is in the Git history (pull requests #81–#84 and earlier).
 
 ## The models
 
@@ -27,27 +26,27 @@ Workflows run by hand from the Actions tab: **FTSE Momentum Chance Test** (plan 
 | --- | --- | --- |
 | 15-minute range and breakout scanner (the live one) | `ftse_trade_scanner.py`, `ftse_live_mock.py`, `ftse_outcomes.py` | Running; backtest negative after costs. From 21 Oct 2026 it also skips shares seen both ways, needs a rejection candle for range trades and a fresh close 0.5 ATR beyond the edge for reclaims; from 23 Oct it also skips ideas whose target would not pay at least 1.5x the possible loss after costs (`--no-entry-rules` turns these off); from 26 Oct each target is capped at the smaller of 2% and the share's typical daily move over the previous 10 days, before the costs check (`--target-cap-pct 0` turns it off); from 28 Oct a trade is skipped if the entry price (next candle's open) leaves less than half the planned room to the stop (`FILL_CHECK_ROOM` in `ftse_execution.py`) |
 | Trend pullback (idea 17) | `ftse_pullback.py` (tested by `ftse_backtest.py`) | Rejected |
-| Range model version 2 (Patrick Nill's method, rebuilt) | `ftse_range_v2.py`, `ftse_range_backtest.py` | Rejected on shares and the index |
-| Claude's model: monthly momentum | `ftse_momentum.py` (backtest), `ftse_momentum_live.py` (paper trading from 30 Oct 2026; plus a comparison portfolio without the market filter from 3 Nov 2026, `ftse_momentum_live_no_filter.xlsx`) | Paper trading |
-| Daily structure pullback (idea 24, Market Structure report) | `ftse_structure.py`, `ftse_structure_backtest.py`, `ftse_structure_live.py` (paper trading from 22 Oct 2026, £250 a trade, results in `ftse_structure_live.xlsx`) | Paper trading; backtests in progress |
+| Range model version 2 (Patrick Nill's method, rebuilt) | removed 3 Nov 2026 (in Git history) | Rejected on shares and the index |
+| Claude's model: monthly momentum | `ftse_momentum.py` (backtest), `ftse_momentum_chance.py` (chance test: beats random portfolios), `ftse_momentum_live.py` (paper trading from 30 Oct 2026; plus a comparison portfolio without the market filter from 3 Nov 2026, `ftse_momentum_live_no_filter.xlsx`) | Paper trading |
+| Daily structure pullback (idea 24, Market Structure report) | `ftse_structure.py`, `ftse_structure_live.py` (paper trading from 22 Oct 2026, £250 a trade, results in `ftse_structure_live.xlsx`) | Paper trading; failed the chance test on 2 Nov 2026 (random days did better) |
 
 ## Scanner settings (from 30 Oct 2026)
 
 `config/scanner.json` holds live scanner settings, all **off** by default (explained in `ftse_settings.py`):
 `ignore_partial_candles` (only use candles that ended `data_delay_minutes` ago, because Yahoo's London prices are
 about 15 minutes late), `chase_limit_pct` + `chase_from` (skip fills too far beyond the 9 EMA in the trade's
-direction) and `no_breakouts_before` (no breakout trades from scans before this time). Switch one on only with
+direction), `no_breakouts_before` (no breakout trades from scans before this time) and, ON from 4 Nov 2026, the fill rules `max_stop_pct` (skip a stop more than 0.9% from the fill) and `min_target_vs_stop` (skip a target left smaller than the stop). Switch one on only with
 Phil's agreement and note the date in `changed`. Each scan prints which settings are on.
 
 ## Folders and files
 
 - `ftse_universe.csv`: the 350 shares (the `type` column marks investment trusts).
 - `scan_data/`: the live history (setups, runs, outcomes, live mock trades, momentum orders). Don't edit by hand.
-  `outcomes.csv` is the old version 1 results, kept for reference and the dashboard; `outcomes.v2.csv` retains the previous results; `outcomes.v3.csv` uses the shared execution rules.
+  `outcomes.csv` is the old version 1 results, kept for reference; `outcomes.v2.csv` retains the previous results; `outcomes.v3.csv` uses the shared execution rules.
 - `results/`: backtest workbooks.
 - `tests/`: automatic checks (`python -m unittest discover -s tests`). They run on every pull request.
-- `docs/`: `IDEAS.md` (copy of the ideas register; the Claude Doc is the master), `LEGACY_SCANNER.md` (the scanner guide and its rules), and the research app guides.
-- Research app (built by Ashley; not switched on): `ftse_research/`, `ftse_research_cli.py`, `ftse_scheduler.py`, `config/`, `deploy/`, `Dockerfile`, `.env.example` and `dashboard/`. See [docs/RESEARCH_APP.md](docs/RESEARCH_APP.md). `dashboard/` and `publish_scans.py` also run the published scans site.
+- `docs/`: `IDEAS.md` (copy of the ideas register; the Claude Doc is the master), `LEGACY_SCANNER.md` (the scanner guide and its rules) and the reliability notes.
+- The research app Ashley built (never switched on) and the private scans dashboard (switched off) were removed on 3 Nov 2026; they are in the Git history if ever wanted.
 - `ftse_sessions.py`: London trading days and hours, used by everything.
 - `requirements.txt` / `requirements.lock`: the Python packages (exact versions in the lock file).
 

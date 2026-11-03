@@ -1,14 +1,9 @@
-import json
-import tempfile
 import unittest
-from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
 
 import ftse_trade_scanner as sc
-import ftse_zone_overhaul_backtest as zo
 import ftse_zones as zb
 
 
@@ -59,27 +54,6 @@ class ZoneTests(unittest.TestCase):
     def test_zones_near(self):
         zones = [sc.Zone(99.0, 99.5), sc.Zone(105.0, 105.5)]
         self.assertEqual(zb.zones_near(zones, 100.0), 1)
-
-
-class CombineTests(unittest.TestCase):
-    def test_combine_writes_a_verdict(self):
-        rng = np.random.default_rng(1)
-        days = [f"2026-09-{d:02d}" for d in range(1, 21)]
-        with tempfile.TemporaryDirectory() as folder:
-            for key, (name, rules) in zo.VARIANTS.items():
-                trades = [{"day": days[i % 20], "ticker": "X.L", "setup": "Range", "direction": "Long",
-                           "net_gbp": float(rng.normal(-0.1, 0.5)), "outcome": "stop", "actual": float(rng.normal(-0.1, 0.5)),
-                           "opposite": float(rng.normal(-0.1, 0.5)), "times": rng.normal(-0.1, 0.5, 5).tolist(),
-                           "fill_time": "09:00", "zones_at_scan": 10, "zones_near_at_scan": 3} for i in range(60)]
-                Path(folder, f"variant_{key}.json").write_text(json.dumps(
-                    {"variant": key, "name": name, "rules": rules, "ideas": 100, "days": days, "trades": trades,
-                     "skipped": 3, "zones_per_share": 10.0, "zones_near_per_idea": 3.0}))
-            out = Path(folder, "z.xlsx")
-            args = SimpleNamespace(out_dir=folder, out=str(out))
-            self.assertEqual(zo.combine(args), 0)
-            data = json.loads(out.with_suffix(".json").read_text())
-            self.assertEqual(len(data["variants"]), 5)
-            self.assertIn("did not beat chance", data["verdict"][1])
 
 
 if __name__ == "__main__":

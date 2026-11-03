@@ -165,7 +165,7 @@ def evaluate_pending(rows: pd.DataFrame, cache: pd.DataFrame, horizons: list[int
                 work.setdefault(row["ticker"], []).append((row, horizon))
     now = pd.Timestamp.now(tz=sc.UK_TZ)
     import ftse_settings
-    chase = ftse_settings.chase_kwargs(ftse_settings.load())
+    chase = ftse_settings.fill_kwargs(ftse_settings.load())
     new_rows, pending, failed = [], 0, 0
     total = len(work)
     for number, (ticker, items) in enumerate(work.items(), 1):

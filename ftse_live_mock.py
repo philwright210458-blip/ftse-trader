@@ -147,13 +147,15 @@ def mock_progress(row: dict, data: pd.DataFrame | None, minutes: int = 15,
     planned = float(row["entry"]) if str(row.get("entry", "")).strip() else None
     import ftse_settings
     sim = simulate(row["direction"], float(row["stop"]), float(row["target"]), signal, data, 1,
-                   observed, f"{minutes}m", planned_entry=planned, **ftse_settings.chase_kwargs(ftse_settings.load()))
+                   observed, f"{minutes}m", planned_entry=planned, **ftse_settings.fill_kwargs(ftse_settings.load()))
     if math.isfinite(sim.fill):
         result["fill"] = round(sim.fill, 2)
     if sim.status == "skipped":
         result["status"] = {"gap": "Skipped: opened past the stop or target",
                             "thin_stop": "Skipped: stop too close at entry",
-                            "chased": "Skipped: entry too far past the 9 EMA"}.get(sim.outcome, "Skipped: outside entry rules")
+                            "chased": "Skipped: entry too far past the 9 EMA",
+                            "wide_stop": "Skipped: stop too far away (loss over about £1)",
+                            "small_target": "Skipped: target left smaller than the stop"}.get(sim.outcome, "Skipped: outside entry rules")
         return result
     if sim.state == "waiting":
         return result

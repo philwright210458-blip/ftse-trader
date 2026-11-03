@@ -22,7 +22,7 @@ from pathlib import Path
 
 SETTINGS_PATH = Path(__file__).parent / "config" / "scanner.json"
 DEFAULTS = {"ignore_partial_candles": False, "data_delay_minutes": 15, "chase_limit_pct": None, "chase_from": None,
-            "no_breakouts_before": None}
+            "no_breakouts_before": None, "max_stop_pct": None, "min_target_vs_stop": None, "fill_rules_from": None}
 
 
 def load(path: Path = SETTINGS_PATH) -> dict:
@@ -61,12 +61,35 @@ def chase_kwargs(settings: dict) -> dict:
     return {"chase_limit_pct": limit, "chase_from": str(start)}
 
 
+def _number(value) -> float | None:
+    try:
+        value = float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+    return value if value is not None and value > 0 else None
+
+
+def fill_kwargs(settings: dict) -> dict:
+    """Keyword arguments for ftse_execution.simulate: the chase check plus the fill rules (empty when all off)."""
+    kwargs = chase_kwargs(settings)
+    start = settings.get("fill_rules_from")
+    stop, ratio = _number(settings.get("max_stop_pct")), _number(settings.get("min_target_vs_stop"))
+    if start and (stop or ratio):
+        kwargs.update({"max_stop_pct": stop, "min_target_vs_stop": ratio, "fill_rules_from": str(start)})
+    return kwargs
+
+
 def describe(settings: dict) -> str:
     on = []
     if candle_delay_minutes(settings):
         on.append(f"ignore part-formed candles ({candle_delay_minutes(settings)} min)")
     if chase_kwargs(settings):
         on.append(f"skip fills more than {settings['chase_limit_pct']}% past the 9 EMA (from {settings['chase_from']})")
+    fill = fill_kwargs(settings)
+    if fill.get("max_stop_pct"):
+        on.append(f"skip stops more than {fill['max_stop_pct']}% away at the fill (from {fill['fill_rules_from']})")
+    if fill.get("min_target_vs_stop"):
+        on.append(f"skip when the target left is less than {fill['min_target_vs_stop']}x the stop (from {fill['fill_rules_from']})")
     if settings.get("no_breakouts_before"):
         on.append(f"no breakout trades before {settings['no_breakouts_before']}")
     return "Scanner settings on: " + "; ".join(on) if on else "Scanner settings: all off (as before)."

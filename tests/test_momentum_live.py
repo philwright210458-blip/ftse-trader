@@ -108,7 +108,9 @@ class LiveMomentumTests(unittest.TestCase):
             universe = Path(folder) / "u.csv"
             universe.write_text("company,epic,yahoo_ticker,index,type\n" + lines + "\n")
             args = SimpleNamespace(universe=str(universe), data_dir=str(Path(folder) / "live"),
-                                   out=str(Path(folder) / "live.xlsx"), history_days=700)
+                                   out=str(Path(folder) / "live.xlsx"), history_days=700,
+                                   no_filter_dir=str(Path(folder) / "nofilter"),
+                                   no_filter_out=str(Path(folder) / "nofilter.xlsx"), no_comparison=False)
             with mock.patch.object(mm, "download", return_value=(open_, close, dividends)):
                 self.assertEqual(live.run(args, now=at("2026-11-03 17:05")), 0)
             book = openpyxl.load_workbook(args.out)
@@ -117,6 +119,24 @@ class LiveMomentumTests(unittest.TestCase):
             self.assertEqual(book["Holdings"].max_row, 11)
             orders = pd.read_csv(Path(args.data_dir) / live.ORDERS_FILE)
             self.assertEqual((orders["status"] == "filled").sum(), 10)
+            # the comparison portfolio without the market filter: same first picks in a rising market
+            other = pd.read_csv(Path(args.no_filter_dir) / live.ORDERS_FILE)
+            self.assertEqual(sorted(other["ticker"]), sorted(orders["ticker"]))
+            summary = [str(c.value) for c in openpyxl.load_workbook(args.out)["Summary"]["A"] if c.value]
+            self.assertTrue(any("without the market filter" in line for line in summary))
+            title = openpyxl.load_workbook(args.no_filter_out)["Summary"]["A1"].value
+            self.assertIn("WITHOUT the market filter", title)
+
+    def test_no_filter_portfolio_stays_invested_in_a_falling_market(self):
+        open_, close, dividends, _ = frames(until="2026-11-03")
+        falling = pd.Series(np.r_[np.linspace(8000, 10000, len(close) - 120), np.linspace(10000, 6000, 120)],
+                            index=close.index)
+        market = live.Market(open_, close, dividends, falling)
+        empty = pd.DataFrame(columns=live.ORDER_COLUMNS)
+        with_filter = live.step(empty, market, NAMES, at("2026-11-03 17:05"))
+        without = live.step(empty, market, NAMES, at("2026-11-03 17:05"), mm.Settings(market_filter=False))
+        self.assertEqual((with_filter["action"] == "Buy").sum(), 0)
+        self.assertEqual((without["action"] == "Buy").sum(), 10)
 
 
 if __name__ == "__main__":

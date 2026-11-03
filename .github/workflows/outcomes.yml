@@ -46,7 +46,8 @@ jobs:
       # Claude's monthly momentum model, paper-traded forward (ftse_momentum_live.py).
       # Decides after the close on the last trading day of each month and fills at the
       # next morning's open; catches up if a run is missed. A failure here never stops
-      # the outcome tracker's results from being saved.
+      # the outcome tracker's results from being saved. Also runs the comparison portfolio without
+      # the market filter (from 3 Nov 2026; ftse_momentum_live_no_filter.xlsx).
       - name: Update momentum paper trader
         continue-on-error: true
         run: python -u ftse_momentum_live.py
@@ -77,6 +78,7 @@ jobs:
           git add --all -- ftse_outcomes.xlsx 2>/dev/null || true
           git add --all -- ftse_scan_latest.xlsx 2>/dev/null || true
           git add --all -- ftse_momentum_live.xlsx 2>/dev/null || true
+          git add --all -- ftse_momentum_live_no_filter.xlsx 2>/dev/null || true
           git add --all -- ftse_structure_live.xlsx 2>/dev/null || true
           if git diff --cached --quiet; then echo "Nothing new to save."; exit 0; fi
           git commit -m "Outcomes $(TZ=Europe/London date '+%Y-%m-%d %H:%M')"

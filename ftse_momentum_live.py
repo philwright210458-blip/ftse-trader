@@ -15,6 +15,11 @@ It never looks ahead and it catches up if a day is missed:
 
 Costs: 0.10% dealing on each buy and sell, 0.5% stamp duty on buys.
 Results go to ftse_momentum_live.xlsx. Paper trading only: no real orders.
+
+A second paper portfolio (from 3 Nov 2026, Phil's choice, plan step 7) runs the same model WITHOUT the market
+filter, from the same first decision and the same £1,000, so the two can be compared on real prices: what the
+filter gives up in growth and what it saves in falls. Its orders are in scan_data/momentum_live_no_filter/ and its
+results in ftse_momentum_live_no_filter.xlsx; the main workbook's Summary shows its value alongside.
 """
 
 from __future__ import annotations
@@ -42,6 +47,8 @@ DECIDE_AFTER = "16:45"                 # UK time: month-end decisions only once 
 DATA_DIR = Path(__file__).parent / "scan_data" / "momentum_live"
 ORDERS_FILE = "orders.csv"
 WORKBOOK = Path(__file__).parent / "ftse_momentum_live.xlsx"
+NO_FILTER_DIR = Path(__file__).parent / "scan_data" / "momentum_live_no_filter"
+NO_FILTER_WORKBOOK = Path(__file__).parent / "ftse_momentum_live_no_filter.xlsx"
 WAITING = ("planned", "waiting for opening prices")
 ORDER_COLUMNS = ["decided_for", "recorded_at", "action", "ticker", "company", "rank", "score", "reason", "status",
                  "fill_date", "fill_price", "units", "amount_gbp", "costs_gbp"]
@@ -174,7 +181,7 @@ def decide(day: pd.Timestamp, orders: pd.DataFrame, market: Market, names: dict,
            settings: mm.Settings) -> pd.DataFrame:
     held = [p["ticker"] for p in positions(orders) if not p["sold"]]
     ranked = market.ranking(day)
-    in_market = mm.market_ok(market.market.dropna(), day)
+    in_market = mm.market_ok(market.market.dropna(), day) if settings.market_filter else True
     if in_market:
         keep_zone = set(ranked.index[:settings.keep])
         target = [t for t in held if t in keep_zone]
@@ -320,12 +327,15 @@ def tracker_history(market: Market, start, open_: pd.Series, close: pd.Series, p
 
 
 def build_workbook(orders: pd.DataFrame, market: Market, names: dict, tracker: pd.Series, now: pd.Timestamp,
-                   latest_rank: pd.DataFrame) -> Workbook:
+                   latest_rank: pd.DataFrame, market_filter: bool = True,
+                   other_value: tuple[str, float] | None = None) -> Workbook:
     wb = Workbook()
     ws = wb.active
     ws.title = "Summary"
     from openpyxl.styles import Font
-    ws.cell(1, 1, "Claude's model: paper trading (monthly momentum)").font = Font(name="Arial", bold=True, size=13)
+    title = "Claude's model: paper trading (monthly momentum)" if market_filter else \
+        "Claude's model WITHOUT the market filter: paper trading (monthly momentum, comparison portfolio)"
+    ws.cell(1, 1, title).font = Font(name="Arial", bold=True, size=13)
     last_day = market.days[-1]
     values = value_history(orders, market)
     all_positions = positions(orders)
@@ -353,17 +363,22 @@ def build_workbook(orders: pd.DataFrame, market: Market, names: dict, tracker: p
             per100 = [((p["proceeds"] + dividends_for(p, market, last_day)) / p["cost"] - 1) * 100 for p in closed]
             rows += [("Closed trades: average per £100 after costs (£)", round(float(np.mean(per100)), 2)),
                      ("Closed trades that made money", f"{np.mean([x > 0 for x in per100]):.0%}")]
+    if other_value is not None:
+        rows += [(f"{other_value[0]}: value now (£)", round(float(other_value[1]), 2))]
     rows += [("Next decision", f"after the close on {upcoming[0].date()}" if upcoming else "next month end"),
-             ("FTSE 100 versus its 200-day average", "above: the model may hold shares" if filter_on
-              else "below: the model would move to cash")]
+             ("FTSE 100 versus its 200-day average",
+              ("above: the model may hold shares" if filter_on else "below: the model would move to cash")
+              if market_filter else ("above" if filter_on else "below") + " (ignored: this portfolio has no market filter)")]
     for r, (label, value) in enumerate(rows, 3):
         ws.cell(r, 1, label).font = Font(name="Arial", bold=True)
         ws.cell(r, 2, value).font = Font(name="Arial")
     note_row = len(rows) + 4
     ws.cell(note_row, 1, "Rules: on the last trading day of each month, rank shares by price change from 12 months ago to "
                          "1 month ago; hold the best 10 above their 200-day average; keep a holding while it stays in the "
-                         "top 20; hold cash when the FTSE 100 is below its 200-day average. Orders fill at the next "
-                         "morning's open. Costs: 0.10% per buy and sell, 0.5% stamp duty on buys. Paper trading only.")
+                         "top 20; " + ("hold cash when the FTSE 100 is below its 200-day average. " if market_filter else
+                                       "NO market filter (stays invested when the FTSE 100 is below its 200-day average). ")
+                         + "Orders fill at the next morning's open. Costs: 0.10% per buy and sell, 0.5% stamp duty on "
+                         "buys. Paper trading only.")
     ws.column_dimensions["A"].width, ws.column_dimensions["B"].width = 58, 60
 
     hold_ws = wb.create_sheet("Holdings")
@@ -439,20 +454,33 @@ def run(args, now: pd.Timestamp | None = None) -> int:
     shares = [t for t in tickers if t in close.columns]
     columns = shares + ([mm.BENCHMARK_TICKER] if mm.BENCHMARK_TICKER in close.columns else [])
     market = Market(open_[columns], close[columns], dividends.reindex(columns=columns).fillna(0.0), market_series)
-    folder = Path(args.data_dir)
-    orders = step(read_orders(folder), market, names, now)
-    write_orders(folder, orders)
-    filled = orders[orders["status"] == "filled"]
-    tracker = pd.Series(dtype=float)
-    if not filled.empty and mm.BENCHMARK_TICKER in market.close.columns:
-        tracker = tracker_history(market, filled["fill_date"].min(), market.open[mm.BENCHMARK_TICKER],
-                                  market.close[mm.BENCHMARK_TICKER], market.paid[mm.BENCHMARK_TICKER])
+    portfolios = [("main", Path(args.data_dir), Path(args.out), mm.Settings())]
+    if not args.no_comparison:
+        portfolios.append(("Same model without the market filter", Path(args.no_filter_dir), Path(args.no_filter_out),
+                           mm.Settings(market_filter=False)))
     ranking = market.ranking(market.days[-1])
-    book = build_workbook(orders, market, names, tracker, now, ranking)
-    saved = sc.save_workbook(book, Path(args.out))
-    latest = orders.tail(12)
-    print(latest[["decided_for", "action", "company", "status", "fill_date", "amount_gbp"]].to_string(index=False)
-          if not latest.empty else f"No decisions yet: the first is after the close on {FIRST_DECISION}.")
+    results = {}
+    for label, folder, _, settings in portfolios:
+        orders = step(read_orders(folder), market, names, now, settings)
+        write_orders(folder, orders)
+        filled = orders[orders["status"] == "filled"]
+        tracker = pd.Series(dtype=float)
+        if not filled.empty and mm.BENCHMARK_TICKER in market.close.columns:
+            tracker = tracker_history(market, filled["fill_date"].min(), market.open[mm.BENCHMARK_TICKER],
+                                      market.close[mm.BENCHMARK_TICKER], market.paid[mm.BENCHMARK_TICKER])
+        values = value_history(orders, market)
+        results[label] = (orders, tracker, float(values.iloc[-1]) if not values.empty else None)
+    for n, (label, folder, out, settings) in enumerate(portfolios):
+        orders, tracker, _ = results[label]
+        other = None
+        if n == 0 and len(portfolios) > 1 and results[portfolios[1][0]][2] is not None:
+            other = (portfolios[1][0], results[portfolios[1][0]][2])
+        book = build_workbook(orders, market, names, tracker, now, ranking, settings.market_filter, other)
+        saved = sc.save_workbook(book, out)
+        latest = orders.tail(12)
+        print(f"\n{'Main portfolio (with the market filter)' if n == 0 else label}:")
+        print(latest[["decided_for", "action", "company", "status", "fill_date", "amount_gbp"]].to_string(index=False)
+              if not latest.empty else f"No decisions yet: the first is after the close on {FIRST_DECISION}.")
     print(f"Workbook saved: {saved}")
     return 0
 
@@ -463,6 +491,9 @@ def main() -> None:
     parser.add_argument("--data-dir", default=str(DATA_DIR))
     parser.add_argument("--out", default=str(WORKBOOK))
     parser.add_argument("--history-days", type=int, default=560, help="Calendar days of prices to download (default 560)")
+    parser.add_argument("--no-filter-dir", default=str(NO_FILTER_DIR))
+    parser.add_argument("--no-filter-out", default=str(NO_FILTER_WORKBOOK))
+    parser.add_argument("--no-comparison", action="store_true", help="Skip the no-market-filter comparison portfolio")
     sys.exit(run(parser.parse_args()))
 
 

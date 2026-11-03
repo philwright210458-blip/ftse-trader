@@ -3,7 +3,8 @@
 The question: does ranking shares by momentum beat picking shares AT RANDOM under exactly the same rules? Each
 random portfolio uses the same share list, the same 200-day-average rule, the same market filter, the same "hold
 10, keep while in the top 20" rule, the same monthly timing and the same costs. The only difference: each month the
-eligible shares are put in a random order instead of momentum order. If random portfolios do as well, the momentum
+eligible shares are put in a random order instead of momentum order. The random order is kept from month to month
+and only partly re-shuffled, tuned so the random portfolios trade about as often as the model (same costs). If random portfolios do as well, the momentum
 ranking adds nothing (and the backtest's growth came from the share list and the rules around it).
 
 FTSE 350 shares, no investment trusts (as the momentum backtest), prices with dividends. Variants set in advance
@@ -47,16 +48,41 @@ VARIANTS = {
 }
 
 
-def random_ranker(rng: np.random.Generator):
-    """Same eligible shares as the real ranking, in a random order (a fresh order every month)."""
+def random_ranker(rng: np.random.Generator, redraw: float = 1.0):
+    """Same eligible shares as the real ranking, in a random order.
+
+    Each share keeps its random score from month to month; each month a share's score is re-drawn with probability
+    `redraw` (1.0 = a completely fresh order every month). The chance test tunes `redraw` so the random portfolios
+    trade about as often as the model: a fresh order every month trades about 4 times as much, and the extra costs
+    would make random portfolios look worse than they are (found 3 Nov, first run)."""
+    scores: dict[str, float] = {}
+
     def rank(close_ff, sma, counts, seen, position):
         ranked = mm.ranking(close_ff, sma, counts, seen, position)
         if ranked.empty:
             return ranked
+        for ticker in ranked.index:
+            if ticker not in scores or rng.random() < redraw:
+                scores[ticker] = rng.random()
         ranked = ranked.copy()
-        ranked["score"] = rng.random(len(ranked))
+        ranked["score"] = [scores[t] for t in ranked.index]
         return ranked.sort_values("score", ascending=False)
     return rank
+
+
+def matched_redraw(open_, close, market, settings, target_trades: int, seed: int, tries: int = 8, runs: int = 6) -> float:
+    """The re-draw rate at which random portfolios make about as many trades as the model (bisection)."""
+    low, high = 0.0, 1.0
+    rng = np.random.default_rng(seed)
+    for _ in range(tries):
+        mid = (low + high) / 2
+        trades = np.mean([len(mm.run_model(open_, close, market, settings, rank_fn=random_ranker(rng, mid)).trades)
+                          for _ in range(runs)])
+        if trades > target_trades:
+            high = mid
+        else:
+            low = mid
+    return (low + high) / 2
 
 
 def growth(values: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> float:
@@ -89,12 +115,16 @@ def run_variant(name: str, rules: dict, open_, close, market, draws: int, seed: 
     whole, first, second = three_growths(values, split)
     everything = mm.equal_weight_everything(close, values.index[0], values.index[-1], 1000.0)
     e_whole, e_first, e_second = three_growths(everything, split)
+    redraw = matched_redraw(open_, close, market, settings, len(model.trades), seed + 1000)
+    print(f"  {name}: random portfolios re-draw {redraw:.1%} of scores a month to match the model's {len(model.trades)} trades")
     rng = np.random.default_rng(seed)
     rand = np.empty((draws, 3))
+    trade_counts = np.empty(draws)
     began = time.time()
     for d in range(draws):
-        r = mm.run_model(open_, close, market, settings, rank_fn=random_ranker(rng))
+        r = mm.run_model(open_, close, market, settings, rank_fn=random_ranker(rng, redraw))
         rand[d] = three_growths(r.values, split)
+        trade_counts[d] = len(r.trades)
         if (d + 1) % 50 == 0:
             print(f"  {name}: {d + 1}/{draws} random portfolios ({time.time() - began:.0f}s)")
     return {
@@ -110,6 +140,8 @@ def run_variant(name: str, rules: dict, open_, close, market, draws: int, seed: 
         "Random as good: whole": luck(whole, rand[:, 0]),
         "Random as good: first half": luck(first, rand[:, 1]),
         "Random as good: second half": luck(second, rand[:, 2]),
+        "Model: trades": len(model.trades), "Random portfolios: average trades": float(trade_counts.mean()),
+        "Random re-draw rate a month": redraw,
         "Months in cash": model.months_in_cash, "Costs paid per £1,000 (£)": round(model.costs, 2),
         "Random draws": draws,
     }
@@ -164,8 +196,8 @@ def run(args) -> int:
     rows = [run_variant(VARIANTS[k][0], VARIANTS[k][1], open_, close, market, args.draws, seed=20 + n)
             for n, k in enumerate(keys)]
     verdict = [f"Claude's monthly momentum model, {close.shape[1]} FTSE 350 shares (no investment trusts), prices with "
-               f"dividends. Random portfolios = the same rules and costs with the eligible shares in a random order each "
-               f"month, {args.draws} per variant. Pass: random as good under {LUCK_LIMIT:.0%} of the time in both halves "
+               f"dividends. Random portfolios = the same rules and costs with the eligible shares in a random order (kept "
+               f"from month to month and partly re-shuffled so they trade about as often as the model), {args.draws} per variant. Pass: random as good under {LUCK_LIMIT:.0%} of the time in both halves "
                "AND better than every share on the list equally in both halves."]
     verdict += verdict_lines(rows)
     table = pd.DataFrame(rows)
@@ -180,7 +212,7 @@ def run(args) -> int:
     bt.note(ws, len(verdict) + 4, "Caution: today's share list, so companies that failed or left the index are missing. "
                                   "Random portfolios share that bias, so the comparison is fair on it. Paper research only.")
     ws.column_dimensions["A"].width = 150
-    pct = [c for c in table.columns if "growth" in c or "half" in c or "best 5%" in c or "as good" in c]
+    pct = [c for c in table.columns if "growth" in c or "half" in c or "best 5%" in c or "as good" in c or "re-draw" in c]
     fb.write_sheet(wb, "Variants", table, ["The model against random portfolios under the same rules."], pct=pct)
     saved = sc.save_workbook(wb, out)
     out.with_suffix(".json").write_text(json.dumps(

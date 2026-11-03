@@ -223,7 +223,10 @@ def market_ok(market_close: pd.Series, stamp: pd.Timestamp) -> bool:
     return bool(history.iloc[-1] > history.tail(TREND_DAYS).mean())
 
 
-def run_model(open_: pd.DataFrame, close: pd.DataFrame, market_close: pd.Series, settings: Settings) -> Result:
+def run_model(open_: pd.DataFrame, close: pd.DataFrame, market_close: pd.Series, settings: Settings,
+              rank_fn=None) -> Result:
+    """rank_fn (research only, e.g. the chance test): replaces `ranking`; the default is the real model."""
+    rank_fn = rank_fn or ranking
     dates = close.index
     close_ff = close.ffill()
     sma = close_ff.rolling(TREND_DAYS, min_periods=TREND_DAYS).mean()
@@ -253,7 +256,7 @@ def run_model(open_: pd.DataFrame, close: pd.DataFrame, market_close: pd.Series,
         if day in schedule:
             p = schedule[day]
             stamp = dates[p]
-            ranked = ranking(close_ff, sma, counts, seen, p)
+            ranked = rank_fn(close_ff, sma, counts, seen, p)
             in_market = market_ok(market_close, stamp) if settings.market_filter else True
             if in_market:
                 keep_zone = set(ranked.index[:settings.keep])

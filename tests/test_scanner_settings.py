@@ -115,3 +115,46 @@ class NoBreakoutsBeforeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FillRuleTests(unittest.TestCase):
+    """Fill rules (agreed 3 Nov 2026): skip a stop more than 0.9% away, and a target left smaller than the stop."""
+
+    def setUp(self):
+        self.data = candles([100.0] * 12 + [101.0] * 22)          # entry candle opens at 101
+        self.signal = pd.Timestamp("2026-11-02 11:00", tz=UK)
+        self.now = pd.Timestamp("2026-11-02 17:00", tz=UK)
+        self.rules = {"max_stop_pct": 0.9, "min_target_vs_stop": 1.0, "fill_rules_from": "2026-11-01"}
+
+    def sim(self, stop, target, side="Long", **rules):
+        return simulate(side, stop, target, self.signal, self.data, 1, self.now, "15m", **rules)
+
+    def test_wide_stop_is_skipped(self):
+        result = self.sim(99.0, 104.0, **self.rules)                   # 1.98% away
+        self.assertEqual((result.status, result.outcome), ("skipped", "wide_stop"))
+        self.assertEqual(self.sim(99.0, 104.0).status, "done")       # off by default
+
+    def test_small_target_is_skipped(self):
+        result = self.sim(100.5, 101.3, **self.rules)                  # target 0.3 left, stop 0.5 away
+        self.assertEqual((result.status, result.outcome), ("skipped", "small_target"))
+        result = self.sim(101.5, 100.7, "Short", **self.rules)         # same for a sell
+        self.assertEqual((result.status, result.outcome), ("skipped", "small_target"))
+
+    def test_good_trade_is_kept(self):
+        self.assertEqual(self.sim(100.5, 102.0, **self.rules).status, "done")
+
+    def test_only_from_the_start_date(self):
+        rules = {**self.rules, "fill_rules_from": "2026-11-03"}
+        self.assertEqual(self.sim(99.0, 104.0, **rules).status, "done")
+
+    def test_settings_and_labels(self):
+        settings = {**fs.DEFAULTS, **self.rules}
+        self.assertEqual(fs.fill_kwargs(settings), self.rules)
+        self.assertEqual(fs.fill_kwargs(fs.DEFAULTS), {})
+        self.assertEqual(fs.fill_kwargs({**settings, "fill_rules_from": None}), {})
+        self.assertIn("0.9% away", fs.describe(settings))
+        row = {"signal_time": "2026-11-02 11:00:00", "data_time": "", "direction": "Long", "stop": 99.0,
+               "target": 104.0, "entry": 101.0}
+        with mock.patch.object(fs, "load", return_value=settings):
+            result = lm.mock_progress(row, self.data, now=self.now)
+        self.assertEqual(result["status"], "Skipped: stop too far away (loss over about £1)")

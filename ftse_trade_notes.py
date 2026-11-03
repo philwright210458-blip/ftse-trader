@@ -65,7 +65,9 @@ from ftse_picker import load_views
 
 NOTES_FILE = "trade_notes.csv"
 SKIP_REASONS = {"thin_stop": ("No: fill check", "skipped: thin stop"),
-                "chased": ("No: chase check", "skipped: too far past the 9 EMA")}
+                "chased": ("No: chase check", "skipped: too far past the 9 EMA"),
+                "wide_stop": ("No: stop too wide", "skipped: stop more than 0.9% away"),
+                "small_target": ("No: small target", "skipped: target left smaller than the stop")}
 STAKE, COST_PCT = 100.0, 0.10
 MAX_AGE_DAYS = 55                  # Yahoo keeps 15-minute candles for about 60 days
 FLAT_GAP_PCT = 0.05                # 9 EMA within 0.05% of the 20 SMA = flat (Admiral 29 Oct: 0.03%)

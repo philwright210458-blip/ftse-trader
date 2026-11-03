@@ -87,9 +87,10 @@ class ExecutionClocks(unittest.TestCase):
 
     def test_early_close_uses_the_exchange_calendar(self):
         data = candles("2026-12-24 12:00", [(100., 100.5, 99.5, 100.)] * 2)
-        row = dict(signal_time="2026-12-24 11:59:00", direction="Long", stop=99., target=103.)
+        # stop 0.8% away so the fill rules (from 4 Nov 2026, max 0.9%) keep the trade
+        row = dict(signal_time="2026-12-24 11:59:00", direction="Long", stop=99.2, target=103.)
         progress = live.mock_progress(row, data, now=stamp("2026-12-24 12:30"))
-        final = outcomes.simulate("Long", 99., 103., stamp(row["signal_time"]), data, 1,
+        final = outcomes.simulate("Long", 99.2, 103., stamp(row["signal_time"]), data, 1,
                                   stamp("2026-12-24 12:30"))
         self.assertEqual((progress["status"], progress["time"]), ("Closed at end of day", "12:30"))
         self.assertEqual(final.exit_price, progress["price"])

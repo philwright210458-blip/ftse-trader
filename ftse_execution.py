@@ -82,7 +82,9 @@ def market_stamp(value) -> pd.Timestamp:
 def simulate(side: str, stop: float, target: float, signal_close: pd.Timestamp,
              data: pd.DataFrame, horizon: int, now: pd.Timestamp, interval: str = "15m",
              daily: pd.DataFrame | None = None, planned_entry: float | None = None,
-             chase_limit_pct: float | None = None, chase_from: str | None = None) -> Sim:
+             chase_limit_pct: float | None = None, chase_from: str | None = None,
+             max_stop_pct: float | None = None, min_target_vs_stop: float | None = None,
+             fill_rules_from: str | None = None) -> Sim:
     """Conservative completed-bar simulation from actual signal availability.
 
     `signal_close` is the later of the signal candle close and scan availability.
@@ -151,6 +153,14 @@ def simulate(side: str, stop: float, target: float, signal_close: pd.Timestamp,
                 return Sim("skipped", "chased", fill=fill, observed_at=first.isoformat())
     risk = abs(fill - stop)
     risk_pct = risk / fill * 100
+    if fill_rules_from and available.date().isoformat() >= fill_rules_from:
+        # Fill rules (settings, agreed by Phil 3 Nov 2026), measured at the actual fill:
+        # wide_stop    the stop is more than max_stop_pct % away (a £100 stop would cost more than about £1)
+        # small_target the target left is smaller than min_target_vs_stop x the stop distance
+        if max_stop_pct is not None and risk_pct > max_stop_pct:
+            return Sim("skipped", "wide_stop", fill=fill, fill_risk_pct=risk_pct, observed_at=first.isoformat())
+        if min_target_vs_stop is not None and abs(target - fill) < min_target_vs_stop * risk:
+            return Sim("skipped", "small_target", fill=fill, fill_risk_pct=risk_pct, observed_at=first.isoformat())
 
     def r_multiple(price):
         return round(((price - fill) if side == "Long" else (fill - price)) / risk, 6)

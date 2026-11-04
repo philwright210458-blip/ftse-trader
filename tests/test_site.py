@@ -43,6 +43,30 @@ class SitePage(unittest.TestCase):
         self.assertIn("2 idea(s) skipped by the entry rules (1 stop too wide, 1 small target)", page)
         self.assertNotIn("<td>Gamma</td>", page)
 
+    def test_momentum_panel(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            for name, value in (("ftse_momentum_live.xlsx", 992.1), ("ftse_momentum_live_no_filter.xlsx", 990.12)):
+                wb = Workbook(); ws = wb.active; ws.title = "Summary"
+                for row in (("Started", "2026-11-02"), ("Prices up to", "2026-11-04"), ("Value now (£)", value),
+                            ("£1,000 in a FTSE 100 tracker on the same day is now (£)", 1010.71),
+                            ("Next decision", "after the close on 2026-11-30"),
+                            ("FTSE 100 versus its 200-day average", "above: the model may hold shares")):
+                    ws.append(row)
+                h = wb.create_sheet("Holdings")
+                h.append(["Company", "Share", "Bought", "Buy price", "Cost (£)", "Value now (£)", "Dividends (£)",
+                          "Profit / loss (£)", "Per £100 (£)"])
+                h.append(["CMC Markets", "CMCX.L", "2026-11-02", 695, 100, 101.84, 0, 1.84, 1.84])
+                wb.save(root / name)
+            page = site.build(root, datetime(2026, 11, 4, 20, 0, tzinfo=ZoneInfo("Europe/London")))
+        self.assertIn("Momentum model (monthly)", page)
+        self.assertIn("£992.10", page)
+        self.assertIn("-£9.88", page)                                  # the no-filter portfolio's change
+        self.assertIn("+£10.71", page)                                 # the tracker
+        self.assertIn("after the close on 2026-11-30", page)
+        self.assertIn("in the market", page)
+        self.assertIn("CMC Markets", page)
+
     def test_empty_repo_still_builds(self):
         with tempfile.TemporaryDirectory() as folder:
             page = site.build(Path(folder), datetime(2026, 10, 31, 12, 0, tzinfo=ZoneInfo("Europe/London")))

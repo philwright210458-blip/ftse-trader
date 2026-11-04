@@ -102,6 +102,58 @@ def scanner_total(path: Path) -> dict | None:
     return None
 
 
+def momentum_summary(path: Path) -> dict | None:
+    """Label/value pairs from a momentum paper trader workbook's Summary, plus its holdings."""
+    if not path.exists():
+        return None
+    try:
+        wb = load_workbook(path, read_only=True, data_only=True)
+        summary = {r[0]: r[1] for r in wb["Summary"].iter_rows(values_only=True) if r and r[0] and len(r) > 1}
+        rows = list(wb["Holdings"].iter_rows(values_only=True))
+    except Exception:
+        return None
+    header = list(rows[0]) if rows else []
+    holdings = [dict(zip(header, r)) for r in rows[1:] if r and r[0]]
+    return {"summary": summary, "holdings": holdings}
+
+
+def momentum_panel(root: Path) -> str:
+    """Both momentum paper portfolios (with and without the market filter) against a FTSE 100 tracker."""
+    main = momentum_summary(root / "ftse_momentum_live.xlsx")
+    other = momentum_summary(root / "ftse_momentum_live_no_filter.xlsx")
+    if main is None:
+        return ""
+    ms = main["summary"]
+    tracker = ms.get("£1,000 in a FTSE 100 tracker on the same day is now (£)")
+
+    def change(value):
+        return value - 1000 if isinstance(value, (int, float)) else None
+
+    lines = [("With the market filter (main)", ms.get("Value now (£)"))]
+    if other is not None:
+        lines.append(("Without the market filter", other["summary"].get("Value now (£)")))
+    lines.append(("FTSE 100 tracker, same day", tracker))
+    vrows = "".join(f'<tr><td>{esc(label)}</td><td class="num">{money(v, False) if isinstance(v, (int, float)) else "–"}</td>'
+                    f'<td class="num {tone(change(v))}">{money(change(v))}</td></tr>' for label, v in lines)
+    hrows = "".join(
+        f'<tr><td>{esc(h.get("Company"))}</td><td class="stamp">{esc(h.get("Bought"))}</td>'
+        f'<td class="num {tone(h.get("Profit / loss (£)") if isinstance(h.get("Profit / loss (£)"), (int, float)) else None)}">'
+        f'{money(h.get("Profit / loss (£)")) if isinstance(h.get("Profit / loss (£)"), (int, float)) else "–"}</td></tr>'
+        for h in main["holdings"]) or '<tr><td colspan="3">Holding cash.</td></tr>'
+    filter_state = str(ms.get("FTSE 100 versus its 200-day average") or "")
+    filter_text = ("in the market (FTSE 100 above its 200-day average)" if filter_state.startswith("above")
+                   else "in cash (FTSE 100 below its 200-day average)" if filter_state.startswith("below") else "–")
+    return f"""<section class="panel"><h2>Momentum model (monthly)</h2>
+<p>£1,000 each, paper only, started {esc(ms.get("Started") or "–")}; prices to {esc(ms.get("Prices up to") or "–")}.
+Next decision {esc(str(ms.get("Next decision") or "at the month end"))}.
+Market filter: {esc(filter_text)}. The two portfolios only differ when the filter says cash.</p>
+<div class="scroll"><table><thead><tr><th>Portfolio</th><th class="num">Value now</th><th class="num">Change</th></tr></thead>
+<tbody>{vrows}</tbody></table></div>
+<details class="skipped"><summary>Shares held ({len(main["holdings"])})</summary>
+<div class="scroll"><table><thead><tr><th>Share</th><th>Bought</th><th class="num">Profit / loss</th></tr></thead>
+<tbody>{hrows}</tbody></table></div></details></section>"""
+
+
 def latest_moves_before(folder: Path, day: str) -> tuple[str, pd.DataFrame]:
     files = sorted(p for p in folder.glob("*.csv") if p.stem < day) if folder.exists() else []
     return (files[-1].stem, read_csv(files[-1])) if files else ("", pd.DataFrame())
@@ -304,10 +356,11 @@ def build(root: Path, now: datetime | None = None) -> str:
 <div class="scroll"><table><thead><tr><th>Share</th><th class="num">Move</th></tr></thead><tbody>{mbody}</tbody></table></div></section>
 </div>""")
 
+    out.append(momentum_panel(root))
     out.append(f"""<section class="panel"><h2>Other models</h2><div class="scroll"><table>
 <thead><tr><th>Model</th><th class="num">Trades</th><th class="num">Closed, after costs</th></tr></thead><tbody>
 <tr><td>Daily structure pullback (£250 a trade)</td><td class="num">{len(structure)}</td><td class="num {tone(structure_net)}">{money(structure_net)}</td></tr>
-</tbody></table></div><p>The monthly momentum model trades at the end of each month; see ftse_momentum_live.xlsx in the repo.</p></section>
+</tbody></table></div></section>
 <footer>Paper trading research only: no real orders and not financial advice. The page refreshes itself every 5 minutes and is rebuilt after each scan and the 17:05 results.
 Files: <a href="https://github.com/philwright210458-blip/ftse-trader">github.com/philwright210458-blip/ftse-trader</a></footer>
 </div>""")

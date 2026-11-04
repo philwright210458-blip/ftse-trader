@@ -36,7 +36,8 @@ fill check removes losers or cuts winners. Totals of real results must use enter
 
 Context and results:
   news_day, picker_view, picker_reason, gap_pct, higher_tf_state (daily 50-day / 4-hour 200 SMA),
-  signal_volume_ratio, mfe_pct / mae_pct (furthest for / against while open), close_outcome_gbp
+  signal_volume_ratio, mfe_pct / mae_pct (furthest for / against while open), close_outcome_gbp,
+  half_target_result / half_target_gbp (from 4 Nov 2026: the result had it taken profit at half the target)
   (the result had it been held to the 16:30 close), data_quality_flag (extreme single-candle wicks, a stop
   hit only by a wick, volume spikes: check against broker data before blaming the strategy).
 
@@ -97,7 +98,8 @@ COLUMNS = [
     "higher_tf_state", "daily_trend", "daily_vs_sma50_pct", "trend_4h", "vs_4h_sma200_pct", "trends_agreeing",
     "ema9", "sma20", "ema9_sma20_gap_pct", "sma20_slope_pct", "fill_vs_ema9_pct", "ema_chase_pct", "signal_volume_ratio",
     # what happened
-    "mfe_pct", "mae_pct", "close_1630", "close_outcome_gbp", "data_quality_flag", "noted_at",
+    "mfe_pct", "mae_pct", "close_1630", "close_outcome_gbp", "half_target_result", "half_target_gbp",
+    "data_quality_flag", "noted_at",
 ]
 
 
@@ -246,6 +248,27 @@ def zone_history(frame: pd.DataFrame, signal_candle: pd.Timestamp, low: float | 
     return None, 0
 
 
+def half_target_result(path: pd.DataFrame, fill: float, stop: float, target: float, sign: int,
+                       close_1630: float) -> tuple[str, float]:
+    """What the trade would have made (£ per £100 after costs) taking profit at HALF the target distance.
+
+    Same rules as the tracker: stop counted first when a candle reaches both; a gap past either fills at the
+    open; anything still open is closed at the 16:30 close. Recorded only (forward test from 4 Nov 2026)."""
+    half = fill + sign * abs(target - fill) / 2
+    outcome, price = "close", close_1630
+    for _, bar in path.iterrows():
+        o, h, l = float(bar["open"]), float(bar["high"]), float(bar["low"])
+        hit_stop = l <= stop if sign == 1 else h >= stop
+        hit_half = h >= half if sign == 1 else l <= half
+        if hit_stop:
+            outcome, price = "stop", (min(o, stop) if sign == 1 else max(o, stop))
+            break
+        if hit_half:
+            outcome, price = "half target", (max(o, half) if sign == 1 else min(o, half))
+            break
+    return outcome, sign * (price - fill) / fill * STAKE - STAKE * COST_PCT / 100
+
+
 def note_trade(trade: dict, outcome: dict, m15: pd.DataFrame, daily: pd.DataFrame,
                closes_4h: pd.Series, setups_day: pd.DataFrame, views: dict | None,
                zone_info: tuple | None = None) -> dict | None:
@@ -380,6 +403,7 @@ def note_trade(trade: dict, outcome: dict, m15: pd.DataFrame, daily: pd.DataFram
     fill_room = abs(fill - stop) / fill * 100
     kept = fill_room / planned_room * 100 if planned_room else None
     net = sign * (exit_price - fill) / fill * STAKE - STAKE * COST_PCT / 100
+    half_outcome, half_net = half_target_result(today[today.index >= fill_start], fill, stop, target, sign, close_1630)
     hold = sign * (close_1630 - fill) / fill * STAKE - STAKE * COST_PCT / 100
     return {
         "key": trade["key"], "day": day, "trade_no": trade.get("trade_no"), "ticker": trade["ticker"],
@@ -408,6 +432,7 @@ def note_trade(trade: dict, outcome: dict, m15: pd.DataFrame, daily: pd.DataFram
         "fill_vs_ema9_pct": _r((fill - e) / e * 100), "ema_chase_pct": _r(sign * (fill - e) / e * 100),
         "signal_volume_ratio": _r(vol_ratio, 1),
         "mfe_pct": _r(mfe), "mae_pct": _r(mae), "close_1630": _r(close_1630, 4), "close_outcome_gbp": _r(hold),
+        "half_target_result": half_outcome, "half_target_gbp": _r(half_net),
         "data_quality_flag": "; ".join(flags),
     }
 
@@ -479,7 +504,8 @@ def summary(notes: pd.DataFrame) -> list[str]:
     skipped = notes[notes["entered"] != "Yes"]
     notes = notes[notes["entered"] == "Yes"]
     lines = [f"{len(notes)} trades noted, £{notes['net_gbp'].sum():+.2f} in all "
-             f"(held to 16:30 instead: £{notes['close_outcome_gbp'].sum():+.2f})."]
+             f"(held to 16:30 instead: £{notes['close_outcome_gbp'].sum():+.2f}; profit at half the target instead: "
+             f"£{pd.to_numeric(notes['half_target_gbp'], errors='coerce').sum():+.2f})."]
     if len(skipped):
         lines.append(f"  {len(skipped)} trade(s) skipped by the fill check would have made "
                      f"£{skipped['counterfactual_gbp'].sum():+.2f} if entered.")

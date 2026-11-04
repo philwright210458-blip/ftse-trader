@@ -310,3 +310,37 @@ class RunTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HalfTargetTests(unittest.TestCase):
+    """Profit taken at half the target distance (recorded only, from 4 Nov 2026)."""
+
+    def bars(self, rows):
+        index = pd.date_range(f"{DAY} 09:00", periods=len(rows), freq="15min", tz=UK)
+        return pd.DataFrame([dict(zip(("open", "high", "low"), r)) for r in rows], index=index)
+
+    def test_long_reaches_half_then_falls_to_stop(self):
+        path = self.bars([(100, 101.2, 99.5), (101, 101, 97.5)])      # target 104, so half target 102
+        outcome, gbp = tn.half_target_result(path, 100.0, 98.0, 104.0, 1, 100.0)
+        self.assertEqual(outcome, "stop")                             # never reached 102 before the stop
+        path = self.bars([(100, 102.5, 99.5), (101, 101, 97.5)])
+        outcome, gbp = tn.half_target_result(path, 100.0, 98.0, 104.0, 1, 100.0)
+        self.assertEqual(outcome, "half target")
+        self.assertAlmostEqual(gbp, 1.90)                             # +2% then 10p costs
+
+    def test_short_and_close(self):
+        path = self.bars([(100, 100.5, 99.5)])                          # sell 100, stop 102, target 96 -> half 98
+        outcome, gbp = tn.half_target_result(path, 100.0, 102.0, 96.0, -1, 99.0)
+        self.assertEqual(outcome, "close")
+        self.assertAlmostEqual(gbp, 0.90)
+
+    def test_stop_counted_first_in_the_same_candle(self):
+        path = self.bars([(100, 102.5, 97.5)])
+        self.assertEqual(tn.half_target_result(path, 100.0, 98.0, 104.0, 1, 100.0)[0], "stop")
+
+    def test_column_in_the_note(self):
+        today = session(DAY, [100.0] * 34)
+        row = tn.note_trade(trade(), outcome(), pd.concat([flat_history(), today]), daily_frame(),
+                            pd.Series(dtype=float), pd.DataFrame(), None)
+        self.assertIn(row["half_target_result"], ("half target", "stop", "close"))
+        self.assertIn("half_target_gbp", tn.COLUMNS)

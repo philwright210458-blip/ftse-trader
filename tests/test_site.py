@@ -24,6 +24,10 @@ class SitePage(unittest.TestCase):
                        "After costs per £100 (£)"])
             ws.append([1, "08:32", "Alpha <b>plc</b>", "A.L", "Range", "Buy", 100, 99, 102, "Open", "10:45", 100.5, 0.5, 0.1, 0.4])
             ws.append([2, "09:02", "Beta", "B.L", "Reclaim", "Sell", 50, 51, 49, "Stopped out", "09:30", 51, -2, 0.1, -2.1])
+            ws.append([3, "09:17", "Gamma", "C.L", "Range", "Buy", None, 99, 102,
+                       "Skipped: stop too far away (loss over about £1)", "", None, None, None, None])
+            ws.append([4, "09:32", "Delta", "D.L", "Range", "Buy", None, 99, 102,
+                       "Skipped: target left smaller than the stop", "", None, None, None, None])
             wb.save(root / "ftse_scan_latest.xlsx")
             (root / "scan_data" / "picker").mkdir(parents=True)
             pd.DataFrame([{"day": "2026-10-27", "ticker": "A.L", "company": "Alpha", "view": "Buy", "reason": "Upgrade",
@@ -35,6 +39,9 @@ class SitePage(unittest.TestCase):
         self.assertIn("-£1.70", page)                                 # today's total after costs
         self.assertIn("2 trade(s): 0 won, 1 lost, 1 open", page)
         self.assertIn("Agrees", page)
+        # skipped ideas are not trades: one folded line, not table rows
+        self.assertIn("2 idea(s) skipped by the entry rules (1 stop too wide, 1 small target)", page)
+        self.assertNotIn("<td>Gamma</td>", page)
 
     def test_empty_repo_still_builds(self):
         with tempfile.TemporaryDirectory() as folder:

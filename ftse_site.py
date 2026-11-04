@@ -158,6 +158,9 @@ td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numer
 .reason { color: var(--muted); font-size: 13px; min-width: 220px; }
 .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; align-items: start; }
 footer { color: var(--muted); font-size: 12px; }
+details.skipped { margin-top: 10px; color: var(--muted); font-size: 13px; }
+details.skipped summary { cursor: pointer; }
+details.skipped ul { margin: 6px 0 0 18px; padding: 0; }
 a { color: var(--accent); }
 """
 
@@ -168,6 +171,29 @@ def status_tag(status: str) -> str:
             "flat" if s.startswith(("Closed", "Skipped")) else "open")
     short = ("Skipped (stop too close)" if "too close" in s else "Skipped (never entered)") if s.startswith("Skipped") else s
     return f'<span class="tag {kind}">{esc(short or "Waiting")}</span>'
+
+
+def skip_reason(status: str) -> str:
+    s = status.lower()
+    return ("stop too wide" if "too far away" in s else "small target" if "target left" in s else
+            "stop too close" if "too close" in s else "chasing" if "ema" in s else
+            "opened past the stop or target" if "opened past" in s else "other")
+
+
+def skipped_note(skipped: list[dict]) -> str:
+    """One line for ideas the entry rules skipped (they are not trades), with the list folded away."""
+    if not skipped:
+        return ""
+    counts: dict[str, int] = {}
+    for t in skipped:
+        reason = skip_reason(str(t.get("Status so far") or ""))
+        counts[reason] = counts.get(reason, 0) + 1
+    why = ", ".join(f"{n} {r}" for r, n in sorted(counts.items(), key=lambda kv: -kv[1]))
+    items = "".join(f"<li>{esc(t.get('Signal time'))} {esc(t.get('Company'))} ({esc(t.get('Direction'))}): "
+                    f"{esc(skip_reason(str(t.get('Status so far') or '')))}</li>" for t in skipped)
+    return (f'<details class="skipped"><summary>{len(skipped)} idea(s) skipped by the entry rules ({esc(why)}). '
+            "Not traded; what they would have done is in the trade notes after 17:05.</summary>"
+            f"<ul>{items}</ul></details>")
 
 
 def build(root: Path, now: datetime | None = None) -> str:
@@ -182,7 +208,9 @@ def build(root: Path, now: datetime | None = None) -> str:
     total = scanner_total(root / "ftse_outcomes.xlsx")
     structure = read_csv(root / "scan_data" / "structure_live" / "trades.csv")
 
-    trades = scan["trades"]
+    everything = scan["trades"]
+    skipped = [t for t in everything if str(t.get("Status so far", "")).startswith("Skipped")]
+    trades = [t for t in everything if not str(t.get("Status so far", "")).startswith("Skipped")]
     nets = [t.get("After costs per £100 (£)") for t in trades if isinstance(t.get("After costs per £100 (£)"), (int, float))]
     today_net = sum(nets) if nets else None
     still_open = sum(1 for t in trades if str(t.get("Status so far", "")).startswith(("Open", "Waiting", "Price")))
@@ -243,7 +271,7 @@ def build(root: Path, now: datetime | None = None) -> str:
     out.append(f"""<section class="panel"><h2>Today's trades</h2>
 <p>£100 each, paper only. Progress from completed 15-minute candles; Yahoo prices can be up to 15 minutes behind. The final result is worked out at 17:05.</p>
 <div class="scroll"><table><thead><tr><th class="num">Signal</th><th>Share</th><th>Trade</th><th class="num">Stop</th><th>Status</th><th class="num">After costs</th><th>Picker</th></tr></thead>
-<tbody>{body}</tbody></table></div></section>""")
+<tbody>{body}</tbody></table></div>{skipped_note(skipped)}</section>""")
 
     # Picker views and yesterday's movers
     scored = {}

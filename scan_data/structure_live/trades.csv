@@ -1,2 +1,2 @@
 signal_day,recorded_at,ticker,company,index,impulse_low,impulse_high,pullback_low,depth,stop,target_measured,fill_day,fill,target_2x,exit_day_measured,exit_measured,result_measured,net_measured,exit_day_2x,exit_2x,result_2x,net_2x,recording
-2026-11-04,2026-11-04 17:09,OCDO.L,Ocado Group,FTSE 250,278.4,355.0,316.2,0.507,312.025,392.8,,,,,,,,,,,,Recorded on signal day
+2026-11-04,2026-11-04 17:09,OCDO.L,Ocado Group,FTSE 250,278.4,355.0,316.2,0.507,312.025,392.8,2026-11-05,339.0,392.95,,,,,,,,,Recorded on signal day

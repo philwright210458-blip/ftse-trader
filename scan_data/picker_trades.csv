@@ -8,3 +8,6 @@ day,ticker,company,view,open,close,move_pct,gross_gbp,costs_gbp,net_gbp
 2026-11-04,BP.L,BP,Sell,588.5,571.6,-2.87,2.87,0.1,2.77
 2026-11-04,IAG.L,International Airlines Group,Buy,417.0,436.3,4.63,4.63,0.1,4.53
 2026-11-04,SHEL.L,Shell plc,Sell,3861.0,3795.5,-1.7,1.7,0.1,1.6
+2026-11-05,BP.L,BP,Sell,560.2,567.4,1.29,-1.29,0.1,-1.39
+2026-11-05,IAG.L,International Airlines Group,Buy,447.4,427.2,-4.51,-4.51,0.1,-4.61
+2026-11-05,SHEL.L,Shell plc,Sell,3707.0,3784.0,2.08,-2.08,0.1,-2.18

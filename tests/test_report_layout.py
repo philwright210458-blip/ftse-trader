@@ -25,7 +25,7 @@ class ReportTests(unittest.TestCase):
         return range(out.TRADES_HEADER_ROW + 1, ws.max_row + 1)
 
     def test_only_two_sheets_and_no_fixed_time_trader(self):
-        self.assertEqual(self.book.sheetnames, ["Live Mock Trades", "Daily", "Notes"])
+        self.assertEqual(self.book.sheetnames, ["Live Mock Trades", "All Trades", "Daily", "Notes"])
         self.assertEqual(out.TRADES_HEADER_ROW, 4)                            # trades start near the top
         self.assertEqual(self.live.freeze_panes, "A5")
         self.assertIn("SYNTHETIC FIXTURE", self.book["Notes"].cell(2, 2).value)
@@ -42,6 +42,7 @@ class ReportTests(unittest.TestCase):
 
     def test_trade_list_and_daily_reconcile_with_totals(self):
         net = self.live.cell(out.TOTALS_ROW, 1).value
+        self.live = self.book["All Trades"]                                  # the full list, oldest first
         self.assertEqual([self.live.cell(out.TRADES_HEADER_ROW, c).value for c in (11, 15)], ["Result", "After £"])
         rows = list(self.trade_rows(self.live))
         self.assertEqual(len(rows), 4)                                       # completed trades only
@@ -56,6 +57,18 @@ class ReportTests(unittest.TestCase):
         daily = self.book["Daily"]
         self.assertAlmostEqual(daily.cell(daily.max_row - 3, 2).value, net)
 
+    def test_recent_view_newest_day_first_with_day_totals(self):
+        all_rows = self.book["All Trades"]
+        days = [all_rows.cell(r, 1).value for r in self.trade_rows(all_rows)]
+        first = self.live.cell(out.TRADES_HEADER_ROW + 1, 1).value
+        self.assertEqual(first, pd.Timestamp(max(days)).strftime("%a %d %b"))   # a day-total row comes first
+        self.assertIn("trade(s):", self.live.cell(out.TRADES_HEADER_ROW + 1, 2).value)
+        listed = [self.live.cell(r, 15).value for r in self.trade_rows(self.live)
+                  if isinstance(self.live.cell(r, 1).value, str) and self.live.cell(r, 1).value[:4].isdigit()]
+        self.assertEqual(len(listed), len(days))                             # fixture has fewer than 5 days
+        daily = self.book["Daily"]
+        self.assertEqual([daily.cell(1, c).value for c in (3, 4, 5, 6)], ["Day £", "Trades", "Won", "Lost"])
+
     def test_comparison_with_every_idea(self):
         avg, every_avg, diff = [self.live.cell(out.COMPARE_ROW, c).value for c in (6, 7, 8)]
         self.assertAlmostEqual(avg, 0.2)
@@ -65,7 +78,7 @@ class ReportTests(unittest.TestCase):
         for col in (1, 6, 7, 8):
             self.assertEqual(self.live.cell(out.TOTALS_ROW, col).number_format, MONEY)
         for col in (13, 14, 15, 16):
-            self.assertEqual(self.live.cell(out.TRADES_HEADER_ROW + 1, col).number_format, MONEY)
+            self.assertEqual(self.book["All Trades"].cell(out.TRADES_HEADER_ROW + 1, col).number_format, MONEY)
         self.assertEqual(self.book["Daily"].cell(2, 2).number_format, MONEY)
         for sheet in self.book.worksheets:
             for row in sheet.iter_rows():
@@ -81,8 +94,8 @@ class ReportTests(unittest.TestCase):
         results["r_gross"] = 0.334
         results["fill_risk_pct"] = 1.0
         book = out.build_report(self.args, frame, frame, {out.LIVE: frame.copy()}, results, {}, "SYNTHETIC PENNY CHECK")
-        live = book["Live Mock Trades"]
-        self.assertEqual(live.cell(out.TOTALS_ROW, 1).value, 0.99)
+        self.assertEqual(book["Live Mock Trades"].cell(out.TOTALS_ROW, 1).value, 0.99)
+        live = book["All Trades"]
         self.assertAlmostEqual(sum(live.cell(r, 15).value for r in self.trade_rows(live)), 0.99)
 
     def test_pending_only_headline_is_not_zero_profit(self):

@@ -332,6 +332,8 @@ TRADE_HEADERS = ["Date", "Time", "Share", "Ticker", "Trade", "Setup", "Entry", "
                  "Result", "Exit", "Before £", "Costs £", "After £", "Running £"]
 TRADE_WIDTHS = [11, 7, 20, 9, 6, 8, 9, 9, 9, 7, 13, 12, 9, 8, 9, 10]
 TOTALS_ROW, TRADES_HEADER_ROW = 2, 4
+RECENT_DAYS = 5                   # Live Mock Trades lists the last 5 trading days, newest first (Phil, 5 Nov 2026)
+DAY_FILL = "D9E1F2"
 COMPARE_ROW = TOTALS_ROW          # the comparison with every idea sits in the totals row (columns 6-8)
 
 
@@ -342,6 +344,7 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
     wb = Workbook()
     live_sheet = wb.active
     live_sheet.title = "Live Mock Trades"
+    all_sheet = wb.create_sheet("All Trades")
     daily = wb.create_sheet("Daily")
     notes = wb.create_sheet("Notes")
     chosen = picks.get(LIVE, pd.DataFrame())
@@ -388,11 +391,10 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
                                  round(avg - base, 2) if avg is not None and base is not None else "Not available",
                                  updated], bold=True)
 
-    # ---------------- Trade list: completed trades only ----------------
-    header(live_sheet, TRADES_HEADER_ROW, TRADE_HEADERS)
-    live_sheet.row_dimensions[TRADES_HEADER_ROW].height = 30
-    for cell in live_sheet[TRADES_HEADER_ROW]:
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    # ---------------- Trade lists: completed trades only ----------------
+    # "All Trades": every completed trade, oldest first, with a running total.
+    # "Live Mock Trades": the last RECENT_DAYS trading days, newest day first, each under a day-total row.
+    rows_out = []
     if not chosen.empty:
         joined = chosen.merge(at_h, on="key", how="left", suffixes=("", "_o"))
         joined = realised_order(add_costs(joined, args.cost_pct, args.stamp_duty_pct))
@@ -400,21 +402,55 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
         running = 0.0
         # Completed trades only (Phil, 27 Oct 2026): skipped and not-yet-resolved trades are left out.
         joined = joined[joined["status"] == "done"]
-        for number, (idx, r) in enumerate(joined.iterrows(), TRADES_HEADER_ROW + 1):
+        for idx, r in joined.iterrows():
             gross, dealing, stamp, net = (float(flows.loc[idx, c]) for c in ("gross_gbp", "dealing_gbp", "stamp_gbp", "net_gbp"))
             running += net
             label = {"target": "Target hit", "stop": "Stopped out", "timeout": "End of day"}[r["outcome"]]
             fill, stop = float(r["fill"]), float(r["stop"])
             room = (fill - stop) if r["direction"] == "Long" else (stop - fill)
-            put(live_sheet, number, [r["day"], str(r["run_time"])[11:16], r["company"], r["ticker"],
-                                     "Buy" if r["direction"] == "Long" else "Sell",
-                                     "Reclaim" if r["setup"] == "Breakout" else r["setup"],
-                                     round(fill, 2), round(stop, 2), round(r["target"], 2),
-                                     round(room / fill * 100, 2) if fill else None, label,
-                                     str(r["exit_time"])[5:16].replace("T", " "), round(gross, 2),
-                                     round(-(dealing + stamp), 2), round(net, 2), round(running, 2)],
-                fill=GOOD if net > 0 else BAD)
-            live_sheet.cell(number, 10).number_format = '0.00"%"'
+            rows_out.append((str(r["day"]), net, [
+                r["day"], str(r["run_time"])[11:16], r["company"], r["ticker"],
+                "Buy" if r["direction"] == "Long" else "Sell",
+                "Reclaim" if r["setup"] == "Breakout" else r["setup"],
+                round(fill, 2), round(stop, 2), round(r["target"], 2),
+                round(room / fill * 100, 2) if fill else None, label,
+                str(r["exit_time"])[5:16].replace("T", " "), round(gross, 2),
+                round(-(dealing + stamp), 2), round(net, 2), round(running, 2)]))
+
+    def trade_header(ws):
+        header(ws, TRADES_HEADER_ROW, TRADE_HEADERS)
+        ws.row_dimensions[TRADES_HEADER_ROW].height = 30
+        for cell in ws[TRADES_HEADER_ROW]:
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    def trade_row(ws, number, values, net):
+        put(ws, number, values, fill=GOOD if net > 0 else BAD)
+        ws.cell(number, 10).number_format = '0.00"%"'
+
+    trade_header(all_sheet)
+    put(all_sheet, 1, ["Every completed live mock trade, oldest first. The Live Mock Trades sheet shows the last "
+                       f"{RECENT_DAYS} trading days."], bold=True)
+    for number, (_, net, values) in enumerate(rows_out, TRADES_HEADER_ROW + 1):
+        trade_row(all_sheet, number, values, net)
+    widths(all_sheet, TRADE_WIDTHS)
+    all_sheet.freeze_panes = f"A{TRADES_HEADER_ROW + 1}"
+
+    trade_header(live_sheet)
+    days = sorted({day for day, _, _ in rows_out}, reverse=True)[:RECENT_DAYS]
+    number = TRADES_HEADER_ROW + 1
+    for day in days:
+        todays = [(net, values) for d, net, values in rows_out if d == day]
+        nets = [net for net, _ in todays]
+        won, lost = sum(n > 1e-9 for n in nets), sum(n < -1e-9 for n in nets)
+        label = pd.Timestamp(day).strftime("%a %d %b")
+        put(live_sheet, number, [label, f"{len(nets)} trade(s): {won} won, {lost} lost"] + [None] * 12
+            + [round(sum(nets), 2), todays[-1][1][15]], fill=DAY_FILL, bold=True)
+        number += 1
+        for net, values in todays:
+            trade_row(live_sheet, number, values, net)
+            number += 1
+    if len(set(d for d, _, _ in rows_out)) > RECENT_DAYS:
+        put(live_sheet, number + 1, [f"Earlier trades: see the All Trades sheet."])
     widths(live_sheet, TRADE_WIDTHS)
     live_sheet.freeze_panes = f"A{TRADES_HEADER_ROW + 1}"
 
@@ -431,7 +467,9 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
          f"{args.stamp_duty_pct:.2f}% on buys (0 = spread bet, the basis for all results from 26 Oct 2026, including earlier "
          "trades)."),
         ("What is listed", "Completed trades only: skipped trades and those without a result yet are left out, and only "
-         "completed trades enter the totals. Results use the version 3 missing-price safeguards."),
+         "completed trades enter the totals. Results use the version 3 missing-price safeguards. Live Mock Trades shows the "
+         f"last {RECENT_DAYS} trading days, newest first, each day under a total row; All Trades has every trade, oldest "
+         "first. Daily has one line per day."),
         ("Stop %", "Room between the entry price and the stop, as a % of the entry price."),
         ("Every idea", "The first sighting each day of every idea the scanner flagged (all shares, before the entry rules), "
          "traded the same way with the same costs. If the live trades don't beat it, the entry rules aren't helping. With "
@@ -446,13 +484,17 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
     widths(notes, [22, 100])
 
     # ---------------- Daily realised balance ----------------
-    header(daily, 1, ["Date", f"{LIVE} (cumulative £)"])
+    header(daily, 1, ["Date", f"{LIVE} (cumulative £)", "Day £", "Trades", "Won", "Lost"])
     daily.row_dimensions[1].height = 45
     curve = cash["net_gbp"].groupby(trades["realised_day"]).sum() if done else pd.Series(dtype=float)
+    counts = cash["net_gbp"].groupby(trades["realised_day"]) if done else None
     all_days = sorted(curve.index)
     for number, (day, value) in enumerate(curve.reindex(all_days).cumsum().items(), 2):
-        put(daily, number, [day, round(float(value), 2)])
-    widths(daily, [12, 26])
+        part = counts.get_group(day)
+        put(daily, number, [day, round(float(value), 2), round(float(curve[day]), 2), len(part),
+                            int((part > 1e-9).sum()), int((part < -1e-9).sum())],
+            fill=GOOD if curve[day] > 1e-9 else BAD if curve[day] < -1e-9 else None)
+    widths(daily, [12, 26, 10, 8, 7, 7])
     if len(all_days) >= 2:
         chart = LineChart()
         chart.title = "Live mock trades: running balance after all fees (£)"
@@ -468,19 +510,21 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
         chart.y_axis.delete = False
         chart.legend = None
         chart.height, chart.width = 9, 22
-        daily.add_chart(chart, "D2")
+        daily.add_chart(chart, "H2")
     put(daily, len(all_days) + 4, [f"Each trade is £{args.position_gbp:.0f}, after dealing costs and stamp duty."])
 
     # ---------------- Money formats ----------------
     for col in (1, 6, 7, 8):
         live_sheet.cell(TOTALS_ROW, col).number_format = MONEY_FORMAT
-    for row_idx in range(TRADES_HEADER_ROW + 1, live_sheet.max_row + 1):
-        for col in range(13, 17):
-            if isinstance(live_sheet.cell(row_idx, col).value, (float, int)):
-                live_sheet.cell(row_idx, col).number_format = MONEY_FORMAT
+    for sheet in (live_sheet, all_sheet):
+        for row_idx in range(TRADES_HEADER_ROW + 1, sheet.max_row + 1):
+            for col in range(13, 17):
+                if isinstance(sheet.cell(row_idx, col).value, (float, int)):
+                    sheet.cell(row_idx, col).number_format = MONEY_FORMAT
     for row_idx in range(2, daily.max_row + 1):
-        if isinstance(daily.cell(row_idx, 2).value, (float, int)):
-            daily.cell(row_idx, 2).number_format = MONEY_FORMAT
+        for col in (2, 3):
+            if isinstance(daily.cell(row_idx, col).value, (float, int)):
+                daily.cell(row_idx, col).number_format = MONEY_FORMAT
     return wb
 
 

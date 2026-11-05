@@ -218,6 +218,7 @@ class DecisionsAndStatistics(unittest.TestCase):
         workbook = out.build_report(args, frame, frame, picks, outcomes, {}, "test")
         live = workbook["Live Mock Trades"]
         self.assertEqual(live.cell(out.TOTALS_ROW, 2).value, 1)
+        live = workbook["All Trades"]
         results = [live.cell(r, 11).value for r in range(out.TRADES_HEADER_ROW + 1, live.max_row + 1)]
         self.assertEqual(results, ["Target hit"])                  # the missing-data trade is not listed
         self.assertEqual(workbook["Daily"].cell(2, 1).value, "2026-10-16")

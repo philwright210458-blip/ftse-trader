@@ -344,3 +344,35 @@ class HalfTargetTests(unittest.TestCase):
                             pd.Series(dtype=float), pd.DataFrame(), None)
         self.assertIn(row["half_target_result"], ("half target", "stop", "close"))
         self.assertIn("half_target_gbp", tn.COLUMNS)
+
+
+class EntryStopTests(unittest.TestCase):
+    """Stop moved to the entry once halfway to the target (recorded only, from 6 Nov 2026)."""
+
+    def bars(self, rows):
+        index = pd.date_range(f"{DAY} 09:00", periods=len(rows), freq="15min", tz=UK)
+        return pd.DataFrame([dict(zip(("open", "high", "low"), r)) for r in rows], index=index)
+
+    def test_winner_turns_back_to_the_entry(self):
+        # buy 100, stop 98, target 104: reaches 102.5 (past halfway), then falls to 97
+        path = self.bars([(100, 102.5, 99.5), (102, 102, 99.6), (100, 100.2, 97)])
+        outcome, gbp = tn.breakeven_result(path, 100.0, 98.0, 104.0, 1, 100.0)
+        self.assertEqual(outcome, "entry stop")
+        self.assertAlmostEqual(gbp, -0.10)                            # just the costs
+        self.assertEqual(tn.half_target_result(path, 100.0, 98.0, 104.0, 1, 100.0)[0], "half target")
+
+    def test_full_target_still_possible(self):
+        path = self.bars([(100, 102.5, 99.5), (102, 104.5, 101)])
+        outcome, gbp = tn.breakeven_result(path, 100.0, 98.0, 104.0, 1, 100.0)
+        self.assertEqual(outcome, "target")
+        self.assertAlmostEqual(gbp, 3.90)
+
+    def test_stop_only_moves_from_the_next_candle(self):
+        path = self.bars([(100, 102.5, 99.5)])                          # halfway and back inside one candle
+        self.assertEqual(tn.breakeven_result(path, 100.0, 98.0, 104.0, 1, 99.0)[0], "close")
+
+    def test_short_never_halfway_hits_original_stop(self):
+        path = self.bars([(100, 100.5, 99.0), (100, 102.5, 99.5)])       # sell 100, stop 102, target 96
+        outcome, gbp = tn.breakeven_result(path, 100.0, 102.0, 96.0, -1, 100.0)
+        self.assertEqual(outcome, "stop")
+        self.assertAlmostEqual(gbp, -2.10)

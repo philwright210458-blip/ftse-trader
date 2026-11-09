@@ -1,0 +1,96 @@
+ticker,sector
+BARC.L,Banks
+HSBA.L,Banks
+LLOY.L,Banks
+NWG.L,Banks
+STAN.L,Banks
+BGEO.L,Banks
+INVP.L,Banks
+ADM.L,Insurance
+AV.L,Insurance
+BEZ.L,Insurance
+HSX.L,Insurance
+LGEN.L,Insurance
+PRU.L,Insurance
+MNG.L,Insurance
+SDLF.L,Insurance
+III.L,Investment & exchanges
+ABDN.L,Investment & exchanges
+ICG.L,Investment & exchanges
+SDR.L,Investment & exchanges
+STJ.L,Investment & exchanges
+LSEG.L,Investment & exchanges
+IGG.L,Investment & exchanges
+BP.L,Oil & gas
+SHEL.L,Oil & gas
+AAL.L,Mining
+ANTO.L,Mining
+GLEN.L,Mining
+RIO.L,Mining
+FRES.L,Mining
+EDV.L,Mining
+MTLN.L,Mining
+CNA.L,Utilities & energy
+NG.L,Utilities & energy
+SSE.L,Utilities & energy
+SVT.L,Utilities & energy
+UU.L,Utilities & energy
+DCC.L,Utilities & energy
+AZN.L,Health
+GSK.L,Health
+HLN.L,Health
+CTEC.L,Health
+SN.L,Health
+ABF.L,Food drink and tobacco
+BATS.L,Food drink and tobacco
+IMB.L,Food drink and tobacco
+CCEP.L,Food drink and tobacco
+CCH.L,Food drink and tobacco
+DGE.L,Food drink and tobacco
+RKT.L,Food drink and tobacco
+ULVR.L,Food drink and tobacco
+TSCO.L,Food drink and tobacco
+SBRY.L,Food drink and tobacco
+BRBY.L,Retail
+JD.L,Retail
+KGF.L,Retail
+MKS.L,Retail
+NXT.L,Retail
+HWDN.L,Retail
+GAW.L,Retail
+CPG.L,Travel & leisure
+ENT.L,Travel & leisure
+IHG.L,Travel & leisure
+IAG.L,Travel & leisure
+WTB.L,Travel & leisure
+BTRW.L,Property & housebuilders
+PSN.L,Property & housebuilders
+BLND.L,Property & housebuilders
+LAND.L,Property & housebuilders
+LMP.L,Property & housebuilders
+SGRO.L,Property & housebuilders
+BBOX.L,Property & housebuilders
+BAB.L,Industrials
+BA.L,Industrials
+BNZL.L,Industrials
+DPLM.L,Industrials
+HLMA.L,Industrials
+IMI.L,Industrials
+ITRK.L,Industrials
+MRO.L,Industrials
+RR.L,Industrials
+RTO.L,Industrials
+SMIN.L,Industrials
+SPX.L,Industrials
+WEIR.L,Industrials
+CRDA.L,Industrials
+AUTO.L,Media data and software
+CCC.L,Media data and software
+EXPN.L,Media data and software
+INF.L,Media data and software
+PSON.L,Media data and software
+REL.L,Media data and software
+SGE.L,Media data and software
+AAF.L,Telecoms
+BT-A.L,Telecoms
+VOD.L,Telecoms

@@ -62,6 +62,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+import ftse_settings
+
 import ftse_trade_scanner as sc
 from ftse_execution import completed_candles, drop_untraded_bars, simulate
 from ftse_picker import load_views
@@ -484,7 +486,9 @@ def completed_trades(data_dir: Path) -> pd.DataFrame:
 def counterfactual(trade: dict, frame: pd.DataFrame, now: pd.Timestamp) -> dict | None:
     """What a skipped trade would have done had it been entered at the next candle's open (no fill check)."""
     signal_close = max(uk(trade["data_time"]) + pd.Timedelta(minutes=15), uk(trade["signal_time"]))
-    sim = simulate(trade["direction"], float(trade["stop"]), float(trade["target"]), signal_close, frame, 1, now, "15m")
+    early = {k: v for k, v in ftse_settings.fill_kwargs(ftse_settings.load()).items() if k.startswith("target_fraction")}
+    sim = simulate(trade["direction"], float(trade["stop"]), float(trade["target"]), signal_close, frame, 1, now, "15m",
+                   **early)                                   # same take-profit rule as entered trades, no skip checks
     if sim.status != "done":
         return None
     return {"fill": sim.fill, "exit_price": sim.exit_price, "exit_time": sim.exit_time, "outcome": sim.outcome}

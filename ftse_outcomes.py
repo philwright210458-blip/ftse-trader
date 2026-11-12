@@ -45,6 +45,8 @@ from pathlib import Path
 
 import pandas as pd
 from openpyxl import Workbook
+
+import ftse_settings
 from openpyxl.chart import LineChart, Reference
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
@@ -337,6 +339,17 @@ DAY_FILL = "D9E1F2"
 COMPARE_ROW = TOTALS_ROW          # the comparison with every idea sits in the totals row (columns 6-8)
 
 
+def shown_target(row, fill: float) -> float:
+    """The target the trade actually aimed for: with the take-profit-early setting on for its day, the fraction of
+    the way from the fill to the scanner's target (12 Nov 2026)."""
+    kwargs = ftse_settings.fill_kwargs(ftse_settings.load())
+    fraction, start = kwargs.get("target_fraction"), kwargs.get("target_fraction_from")
+    target = float(row["target"])
+    if fraction and start and str(row["day"]) >= start and math.isfinite(fill):
+        return fill + (target - fill) * fraction
+    return target
+
+
 def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict[str, pd.DataFrame],
                  outcomes: pd.DataFrame, kinds: dict[str, str], generated: str) -> Workbook:
     """Live Mock Trades (totals row, then completed trades), Daily balance, and Notes."""
@@ -412,7 +425,7 @@ def build_report(args, candidates: pd.DataFrame, pool: pd.DataFrame, picks: dict
                 r["day"], str(r["run_time"])[11:16], r["company"], r["ticker"],
                 "Buy" if r["direction"] == "Long" else "Sell",
                 "Reclaim" if r["setup"] == "Breakout" else r["setup"],
-                round(fill, 2), round(stop, 2), round(r["target"], 2),
+                round(fill, 2), round(stop, 2), round(shown_target(r, fill), 2),
                 round(room / fill * 100, 2) if fill else None, label,
                 str(r["exit_time"])[5:16].replace("T", " "), round(gross, 2),
                 round(-(dealing + stamp), 2), round(net, 2), round(running, 2)]))

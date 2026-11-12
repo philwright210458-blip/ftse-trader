@@ -22,7 +22,8 @@ from pathlib import Path
 
 SETTINGS_PATH = Path(__file__).parent / "config" / "scanner.json"
 DEFAULTS = {"ignore_partial_candles": False, "data_delay_minutes": 15, "chase_limit_pct": None, "chase_from": None,
-            "no_breakouts_before": None, "max_stop_pct": None, "min_target_vs_stop": None, "fill_rules_from": None}
+            "no_breakouts_before": None, "max_stop_pct": None, "min_target_vs_stop": None, "fill_rules_from": None,
+            "target_fraction": None, "target_fraction_from": None}
 
 
 def load(path: Path = SETTINGS_PATH) -> dict:
@@ -76,6 +77,9 @@ def fill_kwargs(settings: dict) -> dict:
     stop, ratio = _number(settings.get("max_stop_pct")), _number(settings.get("min_target_vs_stop"))
     if start and (stop or ratio):
         kwargs.update({"max_stop_pct": stop, "min_target_vs_stop": ratio, "fill_rules_from": str(start)})
+    fraction, fraction_from = _number(settings.get("target_fraction")), settings.get("target_fraction_from")
+    if fraction and fraction < 1 and fraction_from:
+        kwargs.update({"target_fraction": fraction, "target_fraction_from": str(fraction_from)})
     return kwargs
 
 
@@ -90,6 +94,8 @@ def describe(settings: dict) -> str:
         on.append(f"skip stops more than {fill['max_stop_pct']}% away at the fill (from {fill['fill_rules_from']})")
     if fill.get("min_target_vs_stop"):
         on.append(f"skip when the target left is less than {fill['min_target_vs_stop']}x the stop (from {fill['fill_rules_from']})")
+    if fill.get("target_fraction"):
+        on.append(f"take profit at {fill['target_fraction']:.0%} of the target (from {fill['target_fraction_from']})")
     if settings.get("no_breakouts_before"):
         on.append(f"no breakout trades before {settings['no_breakouts_before']}")
     return "Scanner settings on: " + "; ".join(on) if on else "Scanner settings: all off (as before)."

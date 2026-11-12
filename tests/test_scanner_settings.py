@@ -158,3 +158,32 @@ class FillRuleTests(unittest.TestCase):
         with mock.patch.object(fs, "load", return_value=settings):
             result = lm.mock_progress(row, self.data, now=self.now)
         self.assertEqual(result["status"], "Skipped: stop too far away (loss over about £1)")
+
+
+class TakeProfitEarlyTests(unittest.TestCase):
+    """Take profit at half the target (agreed 12 Nov 2026)."""
+
+    def setUp(self):
+        self.data = candles([100.0] * 12 + [101.0] * 2 + [101.6] * 20)    # entry at 101, then up to about 101.6
+        self.signal = pd.Timestamp("2026-11-02 11:00", tz=UK)
+        self.now = pd.Timestamp("2026-11-02 17:00", tz=UK)
+
+    def sim(self, **rules):
+        return simulate("Long", 100.5, 102.0, self.signal, self.data, 1, self.now, "15m", **rules)
+
+    def test_half_target_hit(self):
+        full = self.sim()
+        self.assertNotEqual(full.outcome, "target")                         # 102 is never reached
+        half = self.sim(target_fraction=0.5, target_fraction_from="2026-11-01")
+        self.assertEqual((half.status, half.outcome), ("done", "target"))
+        self.assertAlmostEqual(half.exit_price, 101.6)                      # halfway is 101.5; the jump to 101.6 fills at the open
+
+    def test_only_from_the_start_date(self):
+        later = self.sim(target_fraction=0.5, target_fraction_from="2026-11-03")
+        self.assertNotEqual(later.outcome, "target")
+
+    def test_settings(self):
+        settings = {**fs.DEFAULTS, "target_fraction": 0.5, "target_fraction_from": "2026-11-13"}
+        self.assertEqual(fs.fill_kwargs(settings), {"target_fraction": 0.5, "target_fraction_from": "2026-11-13"})
+        self.assertIn("take profit at 50% of the target", fs.describe(settings))
+        self.assertEqual(fs.fill_kwargs({**settings, "target_fraction": 1.0}), {})

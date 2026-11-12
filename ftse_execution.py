@@ -84,7 +84,8 @@ def simulate(side: str, stop: float, target: float, signal_close: pd.Timestamp,
              daily: pd.DataFrame | None = None, planned_entry: float | None = None,
              chase_limit_pct: float | None = None, chase_from: str | None = None,
              max_stop_pct: float | None = None, min_target_vs_stop: float | None = None,
-             fill_rules_from: str | None = None) -> Sim:
+             fill_rules_from: str | None = None, target_fraction: float | None = None,
+             target_fraction_from: str | None = None) -> Sim:
     """Conservative completed-bar simulation from actual signal availability.
 
     `signal_close` is the later of the signal candle close and scan availability.
@@ -161,6 +162,10 @@ def simulate(side: str, stop: float, target: float, signal_close: pd.Timestamp,
             return Sim("skipped", "wide_stop", fill=fill, fill_risk_pct=risk_pct, observed_at=first.isoformat())
         if min_target_vs_stop is not None and abs(target - fill) < min_target_vs_stop * risk:
             return Sim("skipped", "small_target", fill=fill, fill_risk_pct=risk_pct, observed_at=first.isoformat())
+    if target_fraction is not None and target_fraction_from and available.date().isoformat() >= target_fraction_from:
+        # Take profit early (setting, agreed by Phil 12 Nov 2026): aim for this fraction of the way from the actual
+        # fill to the scanner's target (0.5 = half the target). Checked after the fill rules, which use the full target.
+        target = fill + (target - fill) * target_fraction
 
     def r_multiple(price):
         return round(((price - fill) if side == "Long" else (fill - price)) / risk, 6)

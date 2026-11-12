@@ -5,8 +5,10 @@
   "chase_limit_pct": null,
   "chase_from": null,
   "no_breakouts_before": null,
-  "changed": "2026-10-30: file added, all settings off. 2026-10-30 (Phil agreed, plan step 1): ignore_partial_candles ON from Monday 2 Nov, so live scans use only candles that ended 15+ minutes ago, matching the delay backtest. 2026-11-03 (Phil agreed): fill rules ON from Wednesday 4 Nov: skip a trade whose stop is more than 0.9% away at the fill (a stop would cost more than about \u00a31), and skip one whose target left is smaller than the stop",
+  "changed": "2026-10-30: file added, all settings off. 2026-10-30 (Phil agreed, plan step 1): ignore_partial_candles ON from Monday 2 Nov, so live scans use only candles that ended 15+ minutes ago, matching the delay backtest. 2026-11-03 (Phil agreed): fill rules ON from Wednesday 4 Nov: skip a trade whose stop is more than 0.9% away at the fill (a stop would cost more than about \u00a31), and skip one whose target left is smaller than the stop. 2026-11-12 (Phil agreed): take profit at half the target ON from Friday 13 Nov (step 11 backtest: -\u00a319.60 v -\u00a337.03 over 47 days, better in both halves)",
   "max_stop_pct": 0.9,
   "min_target_vs_stop": 1.0,
-  "fill_rules_from": "2026-11-04"
+  "fill_rules_from": "2026-11-04",
+  "target_fraction": 0.5,
+  "target_fraction_from": "2026-11-13"
 }

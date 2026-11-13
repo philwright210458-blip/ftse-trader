@@ -1,0 +1,47 @@
+# FTSE Let It Run: trailing exits past half target, small targets, first-scan cap
+# (plan step 12, ftse_let_it_run_backtest.py). Run by hand (about an hour), or by a push to the
+# step-12 branch. Saves results/ftse_let_it_run.xlsx / .json / _trades.csv to the branch it ran on.
+
+name: FTSE Let It Run
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [step12-let-it-run]
+    paths:
+      - ftse_let_it_run_backtest.py
+      - .github/workflows/let_it_run_backtest.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftse-backtest
+  cancel-in-progress: false
+
+jobs:
+  backtest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install packages
+        run: pip install -r requirements.txt
+      - name: Run backtest
+        run: python -u ftse_let_it_run_backtest.py --out results/ftse_let_it_run.xlsx
+      - name: Save results to the repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add results/ftse_let_it_run.xlsx results/ftse_let_it_run.json results/ftse_let_it_run_trades.csv
+          if git diff --cached --quiet; then echo "Nothing new to save."; exit 0; fi
+          git commit -m "Let it run $(TZ=Europe/London date '+%Y-%m-%d %H:%M')"
+          for attempt in 1 2 3; do
+            git pull --rebase && git push && exit 0
+            sleep 15
+          done
+          exit 1

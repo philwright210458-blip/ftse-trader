@@ -35,7 +35,7 @@ Workflows run by hand from the Actions tab: **FTSE Momentum Chance Test** (plan 
 `config/scanner.json` holds live scanner settings, all **off** by default (explained in `ftse_settings.py`):
 `ignore_partial_candles` (only use candles that ended `data_delay_minutes` ago, because Yahoo's London prices are
 about 15 minutes late), `chase_limit_pct` + `chase_from` (skip fills too far beyond the 9 EMA in the trade's
-direction), `no_breakouts_before` (no breakout trades from scans before this time) and, ON from 4 Nov 2026, the fill rules `max_stop_pct` (skip a stop more than 0.9% from the fill) and `min_target_vs_stop` (skip a target left smaller than the stop), and, ON from 13 Nov 2026, `target_fraction` 0.5 (take profit halfway to the scanner's target). Switch one on only with
+direction), `no_breakouts_before` (no breakout trades from scans before this time) and, ON from 4 Nov 2026, the fill rules `max_stop_pct` (skip a stop more than 0.9% from the fill) and `min_target_vs_stop` (skip a target left smaller than the stop), and, ON from 13 Nov 2026, `target_fraction` 0.5 (take profit halfway to the scanner's target), and, ON from 19 Nov 2026, `tight_stop_pct` 0.5 with `tight_stop_from` (skip a stop more than 0.5% from the fill, so a stop-out costs about 60p at most; earlier trades keep the 0.9% cap). Switch one on only with
 Phil's agreement and note the date in `changed`. Each scan prints which settings are on.
 
 ## Folders and files

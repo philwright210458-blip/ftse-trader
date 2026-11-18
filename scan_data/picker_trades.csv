@@ -16,3 +16,5 @@ day,ticker,company,view,open,close,move_pct,gross_gbp,costs_gbp,net_gbp
 2026-11-10,SHEL.L,Shell plc,Sell,3665.5,3624.5,-1.12,1.12,0.1,1.02
 2026-11-17,AAL.L,Anglo American plc,Sell,3532.0,3549.0,0.48,-0.48,0.1,-0.58
 2026-11-17,ANTO.L,Antofagasta plc,Sell,2991.0,3019.0,0.94,-0.94,0.1,-1.04
+2026-11-18,EDV.L,Endeavour Mining,Sell,3571.0,3434.0,-3.84,3.84,0.1,3.74
+2026-11-18,FRES.L,Fresnillo plc,Sell,2300.0,2265.0,-1.52,1.52,0.1,1.42

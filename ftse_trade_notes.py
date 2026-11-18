@@ -71,7 +71,7 @@ from ftse_picker import load_views
 NOTES_FILE = "trade_notes.csv"
 SKIP_REASONS = {"thin_stop": ("No: fill check", "skipped: thin stop"),
                 "chased": ("No: chase check", "skipped: too far past the 9 EMA"),
-                "wide_stop": ("No: stop too wide", "skipped: stop more than 0.9% away"),
+                "wide_stop": ("No: stop too wide", "skipped: stop beyond the limit (0.9%; 0.5% from 19 Nov)"),
                 "small_target": ("No: small target", "skipped: target left smaller than the stop")}
 STAKE, COST_PCT = 100.0, 0.10
 MAX_AGE_DAYS = 55                  # Yahoo keeps 15-minute candles for about 60 days

@@ -85,7 +85,8 @@ def simulate(side: str, stop: float, target: float, signal_close: pd.Timestamp,
              chase_limit_pct: float | None = None, chase_from: str | None = None,
              max_stop_pct: float | None = None, min_target_vs_stop: float | None = None,
              fill_rules_from: str | None = None, target_fraction: float | None = None,
-             target_fraction_from: str | None = None) -> Sim:
+             target_fraction_from: str | None = None, tight_stop_pct: float | None = None,
+             tight_stop_from: str | None = None) -> Sim:
     """Conservative completed-bar simulation from actual signal availability.
 
     `signal_close` is the later of the signal candle close and scan availability.
@@ -162,6 +163,11 @@ def simulate(side: str, stop: float, target: float, signal_close: pd.Timestamp,
             return Sim("skipped", "wide_stop", fill=fill, fill_risk_pct=risk_pct, observed_at=first.isoformat())
         if min_target_vs_stop is not None and abs(target - fill) < min_target_vs_stop * risk:
             return Sim("skipped", "small_target", fill=fill, fill_risk_pct=risk_pct, observed_at=first.isoformat())
+    if tight_stop_pct is not None and tight_stop_from and available.date().isoformat() >= tight_stop_from:
+        # Tighter stop cap (setting, Phil 18 Nov 2026: a stop-out should cost about 50-60p, not up to £1): skip a
+        # trade whose stop is more than tight_stop_pct % from the fill. Earlier trades keep the 0.9% cap.
+        if risk_pct > tight_stop_pct:
+            return Sim("skipped", "wide_stop", fill=fill, fill_risk_pct=risk_pct, observed_at=first.isoformat())
     if target_fraction is not None and target_fraction_from and available.date().isoformat() >= target_fraction_from:
         # Take profit early (setting, agreed by Phil 12 Nov 2026): aim for this fraction of the way from the actual
         # fill to the scanner's target (0.5 = half the target). Checked after the fill rules, which use the full target.

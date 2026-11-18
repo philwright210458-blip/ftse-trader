@@ -157,7 +157,7 @@ class FillRuleTests(unittest.TestCase):
                "target": 104.0, "entry": 101.0}
         with mock.patch.object(fs, "load", return_value=settings):
             result = lm.mock_progress(row, self.data, now=self.now)
-        self.assertEqual(result["status"], "Skipped: stop too far away (loss over about £1)")
+        self.assertEqual(result["status"], "Skipped: stop too far away (over the stop limit)")
 
 
 class TakeProfitEarlyTests(unittest.TestCase):
@@ -187,3 +187,37 @@ class TakeProfitEarlyTests(unittest.TestCase):
         self.assertEqual(fs.fill_kwargs(settings), {"target_fraction": 0.5, "target_fraction_from": "2026-11-13"})
         self.assertIn("take profit at 50% of the target", fs.describe(settings))
         self.assertEqual(fs.fill_kwargs({**settings, "target_fraction": 1.0}), {})
+
+
+class TightStopTests(unittest.TestCase):
+    """Tighter stop cap (Phil, 18 Nov 2026): skip a stop more than 0.5% from the fill, from 19 Nov only."""
+
+    def setUp(self):
+        self.data = candles([100.0] * 12 + [101.0] * 22)          # entry candle opens at 101
+        self.signal = pd.Timestamp("2026-11-02 11:00", tz=UK)
+        self.now = pd.Timestamp("2026-11-02 17:00", tz=UK)
+        self.rules = {"max_stop_pct": 0.9, "min_target_vs_stop": 1.0, "fill_rules_from": "2026-11-01"}
+
+    def sim(self, stop, target, **rules):
+        return simulate("Long", stop, target, self.signal, self.data, 1, self.now, "15m", **rules)
+
+    def test_stop_between_half_and_point_nine_is_skipped_from_the_date(self):
+        tight = {**self.rules, "tight_stop_pct": 0.5, "tight_stop_from": "2026-11-01"}
+        result = self.sim(100.3, 103.0, **tight)                       # 0.69% away
+        self.assertEqual((result.status, result.outcome), ("skipped", "wide_stop"))
+        self.assertEqual(self.sim(100.3, 103.0, **self.rules).status, "done")     # 0.9% cap alone keeps it
+
+    def test_earlier_days_keep_the_old_cap(self):
+        later = {**self.rules, "tight_stop_pct": 0.5, "tight_stop_from": "2026-11-03"}
+        self.assertEqual(self.sim(100.3, 103.0, **later).status, "done")
+
+    def test_small_stop_is_kept(self):
+        tight = {**self.rules, "tight_stop_pct": 0.5, "tight_stop_from": "2026-11-01"}
+        self.assertEqual(self.sim(100.6, 102.0, **tight).status, "done")          # 0.40% away
+
+    def test_settings(self):
+        settings = {**fs.DEFAULTS, **self.rules, "tight_stop_pct": 0.5, "tight_stop_from": "2026-11-19"}
+        self.assertEqual(fs.fill_kwargs(settings), {**self.rules, "tight_stop_pct": 0.5, "tight_stop_from": "2026-11-19"})
+        self.assertIn("0.5% away at the fill (from 2026-11-19)", fs.describe(settings))
+        live = fs.fill_kwargs(fs.load())
+        self.assertEqual((live["tight_stop_pct"], live["tight_stop_from"]), (0.5, "2026-11-19"))

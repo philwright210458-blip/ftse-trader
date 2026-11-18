@@ -154,7 +154,7 @@ def mock_progress(row: dict, data: pd.DataFrame | None, minutes: int = 15,
         result["status"] = {"gap": "Skipped: opened past the stop or target",
                             "thin_stop": "Skipped: stop too close at entry",
                             "chased": "Skipped: entry too far past the 9 EMA",
-                            "wide_stop": "Skipped: stop too far away (loss over about £1)",
+                            "wide_stop": "Skipped: stop too far away (over the stop limit)",
                             "small_target": "Skipped: target left smaller than the stop"}.get(sim.outcome, "Skipped: outside entry rules")
         return result
     if sim.state == "waiting":

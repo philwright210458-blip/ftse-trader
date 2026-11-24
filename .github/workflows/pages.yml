@@ -27,7 +27,7 @@ jobs:
     timeout-minutes: 10
     environment:
       name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+      url: ${{ steps.deploy.outputs.page_url || steps.deploy_retry.outputs.page_url }}
     steps:
       # The scans commit their results to main, so build from the newest main, not the triggering commit.
       - uses: actions/checkout@v4
@@ -51,5 +51,19 @@ jobs:
         with:
           path: site
 
+      # GitHub sometimes can't find the just-uploaded page for a moment ("No artifacts named github-pages",
+      # 23-24 Nov 2026), so wait briefly, and if publishing still fails, wait and try once more.
+      - name: Let the upload settle
+        run: sleep 10
+
       - id: deploy
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+
+      - name: Wait before trying again
+        if: steps.deploy.outcome == 'failure'
+        run: sleep 30
+
+      - id: deploy_retry
+        if: steps.deploy.outcome == 'failure'
         uses: actions/deploy-pages@v4
